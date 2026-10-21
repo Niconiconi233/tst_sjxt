@@ -3,7 +3,7 @@
   "bundle": {
     "windows": {
       "webviewInstallMode": {
-        "type": "downloadBootstrapper"
+        "type": "offlineInstaller"
       },
       "nsis": {
         "installMode": "perMachine",

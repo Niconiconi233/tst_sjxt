@@ -32,7 +32,7 @@
     "targets": "all",
     "windows": {
       "webviewInstallMode": {
-        "type": "offlineInstaller"
+        "type": "downloadBootstrapper"
       },
       "nsis": {
         "installMode": "perMachine",

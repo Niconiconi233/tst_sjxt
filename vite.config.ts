@@ -28,8 +28,9 @@ export default defineConfig({
     minify: !process.env.TAURI_ENV_DEBUG ? 'terser' : false,
     sourcemap: !!process.env.TAURI_ENV_DEBUG,
     outDir: 'dist',
-    // 沙箱环境拦截 rmSync 清空目录，改为保留旧产物直接覆盖
-    emptyOutDir: false,
+    // 每次构建前清空 dist：关闭后旧哈希产物会不断堆积（曾累积到 62.9MB，实际产物仅 11.6MB），
+    // 无论本地重复打包还是 Tauri 打包进安装包，都会把无用文件一起带上
+    emptyOutDir: true,
     chunkSizeWarningLimit: 4096,
   },
 });
