@@ -1,0 +1,84 @@
+# ---------------------------------------------------------------
+# 审计组工作管理系统（Tauri 2 + React）— Git 忽略规则
+# 只提交源码与配置；依赖、构建产物、本地数据和密钥不入库。
+# ---------------------------------------------------------------
+
+# ========== 依赖 ==========
+node_modules/
+.pnpm-store/
+.yarn/cache/
+
+# ========== 前端构建产物 ==========
+dist/
+dist-ssr/
+.vite/
+*.tsbuildinfo
+*.local
+
+# ========== Rust / Tauri 构建产物 ==========
+src-tauri/target/
+# 沙箱环境下 cargo 使用的项目内构建目录（rust-target**** / .rust-target****）
+rust-target*/
+.rust-target*/
+# 沙箱环境下 cargo 使用的项目内 CARGO_HOME（避免写入 ~/.cargo）
+.cargo-home/
+
+# ========== Tauri 自动生成内容（由 CLI 重新生成，不入库） ==========
+# 若后续用 tauri android/ios init 生成移动端工程，
+# gen/android 与 gen/apple 通常需要入库，届时再调整这两行
+src-tauri/gen/schemas/
+
+# ========== 密钥与签名文件（务必不要提交） ==========
+*.pem
+*.key
+*.p12
+*.pfx
+src-tauri/keys/
+
+# ========== 本地数据库与数据副本 ==========
+# 运行期数据库存放在系统应用数据目录，此处只防止测试副本被误提交
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.sqlite3-journal
+
+# ========== 日志 ==========
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ========== 环境变量 ==========
+.env
+.env.*
+!.env.example
+
+# ========== 编辑器 / 操作系统 ==========
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ========== 本机工具产生的临时文件 ==========
+# WorkBuddy 的项目记忆（如希望团队共享，可删除下面这一行）
+.workbuddy/
+# 早期工具链在仓库根目录留下的 4 字节占位文件（内容为 blat），可直接删除
+/26qhdk6a
+/9r3ds7sy
+/ayz4ovi5
+/hos3g_5z
+/xggpht1_
+/zlxfp4_w

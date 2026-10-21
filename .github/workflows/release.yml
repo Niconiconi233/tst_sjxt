@@ -1,0 +1,128 @@
+name: Release
+
+# 触发方式
+#   1) 推送版本标签： git tag v0.1.0 && git push origin v0.1.0
+#   2) 手动触发：Actions → Release → Run workflow
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      draft:
+        description: '创建为草稿发布（不自动公开）'
+        type: boolean
+        default: true
+
+# tauri-action 需要写 Release 的权限；同时读取仓库内容
+permissions:
+  contents: write
+
+# 同一版本串行发布，避免两个平台互相覆盖同一个 Release
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  # 前端打包（terser 压缩 Univer 体积较大）容易触发 Node 默认堆上限，这里放宽
+  NODE_OPTIONS: --max-old-space-size=4096
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    strategy:
+      # 单个平台失败不影响其它平台继续出包
+      fail-fast: false
+      matrix:
+        include:
+          - label: macOS Apple Silicon (arm64)
+            platform: macos-latest
+            target: aarch64-apple-darwin
+            args: '--target aarch64-apple-darwin'
+          - label: macOS Intel (x64)
+            platform: macos-latest
+            target: x86_64-apple-darwin
+            args: '--target x86_64-apple-darwin'
+          - label: Windows x64
+            platform: windows-latest
+            target: x86_64-pc-windows-msvc
+            args: ''
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          # macOS 需要在 Intel 机器上产出 arm64 包（或反之），显式添加目标平台
+          targets: ${{ matrix.target }}
+
+      - name: 缓存 Rust 构建产物
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+          key: ${{ matrix.target }}
+
+      - name: 安装前端依赖
+        run: npm ci
+
+      # 防止 tag 与 tauri.conf.json 版本不一致导致 Release 版本号错乱
+      - name: 校验标签与版本号是否一致
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          CONF_VER=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          TAG_VER="${GITHUB_REF_NAME#v}"
+          echo "tag=$TAG_VER app=$CONF_VER"
+          if [ "$CONF_VER" != "$TAG_VER" ]; then
+            echo "::error::标签 $GITHUB_REF_NAME 与 tauri.conf.json 中的 version($CONF_VER) 不一致"
+            exit 1
+          fi
+
+      # Windows 上 rusqlite 的 bundled 特性需要本地 C 编译器，
+      # windows-latest 已自带 MSVC，无需额外安装；macOS 自带 clang。
+      - name: 构建并上传 Release 产物
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # ---- 可选：代码签名与公证（配置对应的 Secrets 后取消注释）----
+          # macOS 签名 + 公证：需 APPLE_CERTIFICATE（.p12 的 base64）、
+          # APPLE_CERTIFICATE_PASSWORD、APPLE_SIGNING_IDENTITY、APPLE_ID、
+          # APPLE_PASSWORD（App 专用密码）、APPLE_TEAM_ID
+          # APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          # APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          # APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          # APPLE_ID: ${{ secrets.APPLE_ID }}
+          # APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Windows 签名（EV/OV 证书）：需 WINDOWS_CERTIFICATE 与密码
+          # TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          # TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          # v__VERSION__ 会被替换为 tauri.conf.json 中的 version，
+          # 标签发布与手动触发都能得到一致的版本号
+          tagName: v__VERSION__
+          releaseName: '审计组工作管理系统 v__VERSION__'
+          releaseBody: |
+            审计组工作管理系统 v__VERSION__ 桌面安装包。
+
+            - macOS：`.dmg`（Apple Silicon 为 aarch64，Intel 为 x64）
+            - Windows：`.msi`（Windows Installer）与 `.exe`（NSIS 安装器）
+
+            数据保存在本机 SQLite 文件中，卸载或升级不会清除已有审计数据。
+            当前安装包未做代码签名，macOS 首次打开如提示"已损坏/无法验证开发者"，
+            可在"系统设置 → 隐私与安全性"中允许，或执行：
+            `xattr -dr com.apple.quarantine /Applications/AuditWorkspace.app`
+          releaseDraft: ${{ inputs.draft || false }}
+          prerelease: false
+          args: ${{ matrix.args }}

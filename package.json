@@ -1,0 +1,44 @@
+{
+  "name": "audit-group-management-system",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "审计机构派出审计组审计工作管理系统",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -b --noEmit false --emitDeclarationOnly false",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@ant-design/icons": "^5.5.2",
+    "@tauri-apps/api": "^2.1.1",
+    "@univerjs/core": "^1.1.0",
+    "@univerjs/design": "^1.1.0",
+    "@univerjs/docs": "^1.1.0",
+    "@univerjs/docs-ui": "^1.1.0",
+    "@univerjs/engine-formula": "^1.1.0",
+    "@univerjs/engine-render": "^1.1.0",
+    "@univerjs/sheets": "^1.1.0",
+    "@univerjs/sheets-formula": "^1.1.0",
+    "@univerjs/sheets-ui": "^1.1.0",
+    "@univerjs/ui": "^1.1.0",
+    "antd": "^5.22.5",
+    "dayjs": "^1.11.13",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.28.0",
+    "rxjs": "^7.8.2"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.1.0",
+    "@types/node": "^26.6.5",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "terser": "^5.51.2",
+    "typescript": "^5.6.3",
+    "vite": "^6.0.3"
+  }
+}

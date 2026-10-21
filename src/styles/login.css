@@ -1,0 +1,387 @@
+/* ============ macOS 风格登录界面 ============ */
+
+.os-login {
+  position: relative;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+  background:
+    radial-gradient(1200px 700px at 15% 20%, #33548f 0%, transparent 60%),
+    radial-gradient(900px 600px at 85% 15%, #7b4b9a 0%, transparent 55%),
+    radial-gradient(1000px 700px at 70% 85%, #1f6b8f 0%, transparent 60%),
+    linear-gradient(160deg, #132038 0%, #0b1526 55%, #131b2c 100%);
+  color: #fff;
+  font-family: 'PingFang SC', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  user-select: none;
+}
+
+/* 壁纸噪点 + 虚.Accounts柔光 */
+.os-login::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+  background-size: 3px 3px;
+  opacity: 0.5;
+}
+.os-login::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  box-shadow: inset 0 0 260px 60px rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+}
+
+/* ---------- 顶部菜单栏 ---------- */
+.os-menubar {
+  position: relative;
+  z-index: 2;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.92);
+  background: rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+.os-menubar__left,
+.os-menubar__right {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.os-menubar__item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: default;
+  opacity: 0.92;
+  font-variant-numeric: tabular-nums;
+}
+
+.os-menubar__brand {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+.os-menubar__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #6ea8fe;
+  box-shadow: 0 0 8px rgba(110, 168, 254, 0.9);
+}
+
+/* ---------- 中部舞台 ---------- */
+.os-stage {
+  position: relative;
+  z-index: 2;
+  height: calc(100vh - 26px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 26px;
+}
+
+.os-title {
+  font-size: 13px;
+  letter-spacing: 2px;
+  color: rgba(255, 255, 255, 0.62);
+  margin: 0;
+  font-weight: 400;
+}
+
+.os-loading {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.7);
+  padding: 42px 0;
+  letter-spacing: 0.5px;
+}
+
+/* ---------- 头像墙 ---------- */
+.os-users {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 26px;
+  flex-wrap: wrap;
+  max-width: 900px;
+}
+
+.os-account {
+  width: 168px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.os-account__avatar {
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 30px;
+  font-weight: 500;
+  color: #fff;
+  background: #41546b;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.45), inset 0 -2px 8px rgba(0, 0, 0, 0.2);
+  border: 2px solid rgba(255, 255, 255, 0.16);
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+}
+.os-account:hover .os-account__avatar {
+  transform: translateY(-2px) scale(1.02);
+}
+.os-account.is-active .os-account__avatar {
+  border-color: rgba(255, 255, 255, 0.85);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.18), 0 8px 26px rgba(0, 0, 0, 0.5);
+}
+
+.os-account__name {
+  font-size: 13.5px;
+  color: rgba(255, 255, 255, 0.92);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+  white-space: nowrap;
+}
+.os-account.is-active .os-account__name {
+  color: #fff;
+  font-weight: 500;
+}
+
+.os-account__add {
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  border: 2px dashed rgba(255, 255, 255, 0.45);
+  display: grid;
+  place-items: center;
+  font-size: 30px;
+  color: rgba(255, 255, 255, 0.75);
+  background: rgba(255, 255, 255, 0.06);
+  transition: background 0.2s, transform 0.2s;
+}
+.os-account:hover .os-account__add {
+  background: rgba(255, 255, 255, 0.14);
+  transform: translateY(-2px);
+}
+
+/* ---------- 密码区 ---------- */
+.os-passbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px 5px 10px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.42);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  transition: border-color 0.2s;
+}
+.os-passbox:hover {
+  border-color: rgba(255, 255, 255, 0.4);
+}
+.os-passbox.is-error {
+  border-color: #ff7875;
+  animation: os-shake 0.4s;
+}
+.os-passbox input {
+  width: 168px;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: #fff;
+  font-size: 13px;
+  font-family: inherit;
+}
+.os-passbox input::placeholder {
+  color: rgba(255, 255, 255, 0.5);
+}
+.os-passbox__go {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.9);
+  color: #1f2933;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  transition: transform 0.15s;
+}
+.os-passbox__go:hover {
+  transform: scale(1.06);
+}
+
+.os-passbox__divider {
+  width: 1px;
+  height: 18px;
+  background: rgba(255, 255, 255, 0.25);
+}
+
+@keyframes os-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  20% {
+    transform: translateX(-8px);
+  }
+  40% {
+    transform: translateX(7px);
+  }
+  60% {
+    transform: translateX(-5px);
+  }
+  80% {
+    transform: translateX(3px);
+  }
+}
+
+.os-hint {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+  margin-top: 6px;
+  min-height: 18px;
+}
+.os-hint.is-error {
+  color: #ff9c96;
+}
+
+/* ---------- 新建账户面板 ---------- */
+.os-create {
+  width: 620px;
+  border-radius: 16px;
+  padding: 20px 22px 16px;
+  background: rgba(20, 28, 44, 0.62);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+}
+.os-create__title {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0 0 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.os-create__row {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.os-create__field {
+  flex: 1;
+  min-width: 0;
+}
+.os-create__label {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.65);
+  margin-bottom: 4px;
+}
+.os-create__colors {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.os-create__color {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: transform 0.15s;
+}
+.os-create__color:hover {
+  transform: scale(1.08);
+}
+.os-create__color.is-active {
+  border-color: #fff;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.25);
+}
+.os-create__foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.os-create .ant-input,
+.os-create .ant-input-password,
+.os-create .ant-select-selector,
+.os-create .ant-input-affix-wrapper {
+  background: rgba(255, 255, 255, 0.1) !important;
+  border-color: rgba(255, 255, 255, 0.18) !important;
+  color: #fff !important;
+  box-shadow: none !important;
+}
+.os-create .ant-input::placeholder {
+  color: rgba(255, 255, 255, 0.45);
+}
+.os-create .ant-select-selection-item,
+.os-create .ant-select-arrow {
+  color: #fff !important;
+}
+.os-create .ant-checkbox-wrapper,
+.os-create .ant-form-item-extra {
+  color: rgba(255, 255, 255, 0.75) !important;
+}
+
+/* ---------- 存储状态标识 ---------- */
+.os-store {
+  position: fixed;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.92);
+  background: rgba(20, 26, 38, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  backdrop-filter: blur(14px) saturate(160%);
+  -webkit-backdrop-filter: blur(14px) saturate(160%);
+  z-index: 30;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.os-store:hover {
+  background: rgba(20, 26, 38, 0.62);
+  border-color: rgba(255, 255, 255, 0.28);
+}
+
+.os-store__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #8a94a6;
+  box-shadow: 0 0 0 3px rgba(138, 148, 166, 0.18);
+}
+
+.os-store--sqlite .os-store__dot {
+  background: #34c759;
+  box-shadow: 0 0 0 3px rgba(52, 199, 89, 0.22);
+}
+
+.os-store--browser .os-store__dot {
+  background: #ffb020;
+  box-shadow: 0 0 0 3px rgba(255, 176, 32, 0.22);
+}
