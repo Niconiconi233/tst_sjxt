@@ -18,7 +18,7 @@ on:
 permissions:
   contents: write
 
-# 同一版本串行发布，避免两个平台互相覆盖同一个 Release
+# 同一版本串行发布，避免多个平台 / 变体互相覆盖同一个 Release
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
@@ -40,14 +40,28 @@ jobs:
             platform: macos-latest
             target: aarch64-apple-darwin
             args: '--target aarch64-apple-darwin'
+            assetPattern: ''
           - label: macOS Intel (x64)
             platform: macos-latest
             target: x86_64-apple-darwin
             args: '--target x86_64-apple-darwin'
-          - label: Windows x64
+            assetPattern: ''
+
+          # 变体一：内置 WebView2 离线运行时（约 +130MB），适合内网 / 无网机器
+          - label: Windows x64 · 离线版（内置 WebView2）
             platform: windows-latest
             target: x86_64-pc-windows-msvc
-            args: ''
+            args: '--target x86_64-pc-windows-msvc'
+            assetPattern: '[name]_[version]_[arch]_offline[setup][ext]'
+
+          # 变体二：不含 WebView2，安装时按需联网下载，体积小
+          # 通过 --config 覆盖 tauri.conf.json 默认的 offlineInstaller；
+          # 覆盖文件里刻意重复写了 nsis 配置，避免不同合并语义下安装界面/安装模式回落默认值
+          - label: Windows x64 · 在线版（不含 WebView2）
+            platform: windows-latest
+            target: x86_64-pc-windows-msvc
+            args: '--target x86_64-pc-windows-msvc --config src-tauri/tauri.online.conf.json'
+            assetPattern: '[name]_[version]_[arch]_online[setup][ext]'
 
     runs-on: ${{ matrix.platform }}
 
@@ -91,6 +105,9 @@ jobs:
 
       # Windows 上 rusqlite 的 bundled 特性需要本地 C 编译器，
       # windows-latest 已自带 MSVC，无需额外安装；macOS 自带 clang。
+      # Windows 跑两个变体：默认配置出「离线版」（内置 WebView2，构建时会从微软下载约 130MB），
+      # 带 --config 的变体出「在线版」（安装时按需下载 WebView2，安装包小）。
+      # 两者产物名通过 releaseAssetNamePattern 加 _offline / _online 后缀区分，避免同名冲突。
       - name: 构建并上传 Release 产物
         uses: tauri-apps/tauri-action@v0
         env:
@@ -117,7 +134,16 @@ jobs:
             审计组工作管理系统 v__VERSION__ 桌面安装包。
 
             - macOS：`.dmg`（Apple Silicon 为 aarch64，Intel 为 x64）
-            - Windows：`.msi`（Windows Installer）与 `.exe`（NSIS 安装器）
+            - Windows 离线版 `_offline`：`-setup.exe`（NSIS）与 `.msi`，内置 WebView2 运行时，
+              安装包约 +130 MB，可在完全离线的机器上一键安装（推荐内网部署使用）
+            - Windows 在线版 `_online`：`-setup.exe`（NSIS）与 `.msi`，不含 WebView2，
+              体积小；系统缺少运行时会联网下载（Windows 10 1803 以上通常已自带）
+
+            系统要求：Windows 10 1803 及以上（64 位）或 Windows 11。
+
+            Windows 安装程序为简体中文界面，默认安装到 `C:\Program Files`（需管理员权限），
+            同一台机器的多个 Windows 账户共用一套程序；审计数据按 Windows 账户分别存放在
+            `%APPDATA%\cn.audit.workspace\` 下，互不可见。
 
             数据保存在本机 SQLite 文件中，卸载或升级不会清除已有审计数据。
             当前安装包未做代码签名，macOS 首次打开如提示"已损坏/无法验证开发者"，
@@ -126,3 +152,7 @@ jobs:
           releaseDraft: ${{ inputs.draft || false }}
           prerelease: false
           args: ${{ matrix.args }}
+          # 给 Windows 两个变体加 _offline / _online 后缀，macOS 传空串则保留 Tauri 默认命名
+          releaseAssetNamePattern: ${{ matrix.assetPattern }}
+          # 多个任务并发创建/上传同一个 Release，失败时自动重试
+          retryAttempts: 3
