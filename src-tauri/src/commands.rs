@@ -9,7 +9,7 @@ use tauri::State;
 
 use crate::db::AppState;
 use crate::db_err;
-use crate::models::{i, s, CmdResult, UserRecord, WorkspaceData};
+use crate::models::{i, s, CmdResult, DictItem, UserRecord, WorkspaceData};
 
 fn lock<'a>(state: &'a State<'_, AppState>) -> MutexGuard<'a, Connection> {
     state.db.lock().unwrap_or_else(|e| e.into_inner())
@@ -70,6 +70,102 @@ pub fn reveal_db_file(state: State<'_, AppState>) -> CmdResult<()> {
     spawned
         .map(|_| ())
         .map_err(|e| format!("无法打开数据库所在目录：{e}"))
+}
+
+/* ------------------------------------------------------------------ */
+/* 业务字典（下拉选项配置）                                            */
+/* ------------------------------------------------------------------ */
+
+const DICT_COLUMNS: &str = "id, category, parent, label, remark, sort_order, enabled, builtin";
+
+fn dict_mapper(r: &rusqlite::Row<'_>) -> rusqlite::Result<DictItem> {
+    Ok(DictItem {
+        id: r.get(0)?,
+        category: r.get(1)?,
+        parent: r.get(2)?,
+        label: r.get(3)?,
+        remark: r.get(4)?,
+        sort_order: r.get(5)?,
+        enabled: r.get::<_, i32>(6).unwrap_or(1) != 0,
+        builtin: r.get::<_, i32>(7).unwrap_or(0) != 0,
+    })
+}
+
+/// 全量字典（前端按 category / parent 自行分组）
+#[tauri::command]
+pub fn list_dict(state: State<'_, AppState>) -> CmdResult<Vec<DictItem>> {
+    let conn = lock(&state);
+    let mut stmt = db_err!(conn.prepare(&format!(
+        "SELECT {DICT_COLUMNS} FROM dict_items
+         ORDER BY category ASC, parent ASC, sort_order ASC, id ASC"
+    )))?;
+    let rows = db_err!(stmt.query_map([], dict_mapper))?;
+    Ok(rows.filter_map(|x| x.ok()).collect())
+}
+
+/// 新增或更新字典条目（幂等 upsert）
+#[tauri::command]
+pub fn save_dict_item(state: State<'_, AppState>, item: Json) -> CmdResult<DictItem> {
+    let rec = DictItem::from_json(&item);
+    if rec.category.is_empty() || rec.label.is_empty() {
+        return Err("字典分类与名称不能为空".into());
+    }
+    let id = if rec.id.is_empty() {
+        format!("d_{}_{}", rec.category, chrono_like_stamp())
+    } else {
+        rec.id
+    };
+    let conn = lock(&state);
+    db_err!(conn.execute(
+        "INSERT INTO dict_items (id, category, parent, label, remark, sort_order, enabled, builtin)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+         ON CONFLICT(id) DO UPDATE SET
+           category = excluded.category,
+           parent = excluded.parent,
+           label = excluded.label,
+           remark = excluded.remark,
+           sort_order = excluded.sort_order,
+           enabled = excluded.enabled,
+           builtin = excluded.builtin",
+        rusqlite::params![
+            id,
+            rec.category,
+            rec.parent,
+            rec.label,
+            rec.remark,
+            rec.sort_order,
+            rec.enabled as i32,
+            rec.builtin as i32
+        ],
+    ))?;
+    Ok(DictItem { id, ..rec })
+}
+
+/// 删除字典条目
+#[tauri::command]
+pub fn delete_dict_item(state: State<'_, AppState>, id: String) -> CmdResult<()> {
+    let conn = lock(&state);
+    db_err!(conn.execute("DELETE FROM dict_items WHERE id = ?1", rusqlite::params![id]))?;
+    Ok(())
+}
+
+/// 补回系统预置项：只补缺失的，不动人工新增与已改名的条目
+#[tauri::command]
+pub fn restore_dict_defaults(state: State<'_, AppState>) -> CmdResult<Vec<DictItem>> {
+    let conn = lock(&state);
+    db_err!(crate::dict::seed_defaults(&conn))?;
+    drop(conn);
+    list_dict(state)
+}
+
+/// 生成字典条目 id 用的时间戳片段（避免引入额外依赖）
+fn chrono_like_stamp() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let n = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    format!("{n}")
 }
 
 /* ------------------------------------------------------------------ */
@@ -138,7 +234,8 @@ pub fn save_user(state: State<'_, AppState>, user: Json) -> CmdResult<UserRecord
            role = excluded.role,
            password = excluded.password,
            with_demo = excluded.with_demo,
-           last_login_at = excluded.last_login_at",
+           last_login_at = excluded.last_login_at,
+           deleted_at = NULL",
         rusqlite::params![
             rec.id,
             rec.name,

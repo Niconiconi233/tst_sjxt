@@ -3,32 +3,26 @@ import { App, Button, Checkbox, Input, Modal, Select, Typography } from 'antd';
 import { ArrowRightOutlined, LockOutlined, UserAddOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { useAuth } from '@/store/authStore';
-import { allRoles } from '@/mock/data';
+import { useDict } from '@/store/dictStore';
 import type { GroupRole } from '@/types';
 import '@/styles/login.css';
 
 const AVATAR_COLORS = ['#1a5fb4', '#0f7b8a', '#7a3fa8', '#b7791f', '#1a7f4b', '#b42318', '#41546b', '#5a6acf'];
 
-const DEPARTMENTS = [
-  '财政审计一处',
-  '财政审计二处',
-  '经济责任审计处',
-  '固定资产投资审计处',
-  '社会保障审计处',
-  '金融审计处',
-  '行政事业审计处',
-  '企业审计处',
-  '计算机审计中心',
-  '法规审理处',
-];
-
-const TITLES = ['处长', '副处长', '调研员', '副调研员', '主任科员', '审计员', '工程师'];
-
 const WEEKDAYS = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
+
+/** 把字典里的名称数组转成 Select 需要的 {label, value} */
+const toOptions = (list: string[]) => list.map((x) => ({ label: x, value: x }));
 
 export default function Login() {
   const { users, login, createUser, ready, storageMode } = useAuth();
+  const { labels } = useDict();
   const { message } = App.useApp();
+
+  // 部门、职务、角色全部取自后端字典，可在「系统设置 → 字典与模板配置」维护
+  const departments = labels('department');
+  const titles = labels('title');
+  const roles = labels('role');
 
   const [mode, setMode] = useState<'accounts' | 'create'>('accounts');
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -38,18 +32,29 @@ export default function Login() {
   const [storeHelp, setStoreHelp] = useState(false);
   const pwdRef = useRef<HTMLInputElement>(null);
 
-  // 新建账户表单
+  // 新建账户表单：部门/职务/角色的默认值等字典装载后再填，避免写死
   const [form, setForm] = useState({
     name: '',
-    department: '财政审计一处',
-    title: '审计员',
+    department: '',
+    title: '',
     employeeCode: '',
-    role: '审计组长' as GroupRole,
+    role: '' as GroupRole,
     password: '',
     confirmPassword: '',
     avatarColor: AVATAR_COLORS[0],
     withDemo: true,
   });
+
+  // 字典就绪后补上默认选中项；已手工改过的保持不动
+  useEffect(() => {
+    if (!departments.length && !titles.length && !roles.length) return;
+    setForm((f) => ({
+      ...f,
+      department: f.department || departments[0] || '',
+      title: f.title || titles[0] || '',
+      role: (f.role && roles.includes(f.role) ? f.role : (roles[0] as GroupRole)) || f.role,
+    }));
+  }, [departments, titles, roles]);
 
   useEffect(() => {
     const t = window.setInterval(() => setNow(dayjs()), 1000);
@@ -73,9 +78,9 @@ export default function Login() {
     if (mode === 'accounts' && needPassword) pwdRef.current?.focus();
   }, [activeId, mode, needPassword]);
 
-  const doLogin = (pwd: string) => {
-    if (!activeUser) return;
-    const res = login(activeUser.id, pwd);
+  const doLogin = (user: typeof activeUser, pwd: string) => {
+    if (!user) return;
+    const res = login(user.id, pwd);
     if (!res.ok) {
       setError(res.message ?? '登录失败');
       setPassword('');
@@ -91,6 +96,10 @@ export default function Login() {
     }
     if (form.password && form.password !== form.confirmPassword) {
       message.warning('两次输入的登录口令不一致');
+      return;
+    }
+    if (!form.department || !form.title || !form.role) {
+      message.warning('请先在「系统设置 → 字典与模板配置」中维护所属部门、职务与角色');
       return;
     }
     createUser({
@@ -133,6 +142,9 @@ export default function Login() {
           <div className="os-loading">正在读取本机账户数据…</div>
         ) : mode === 'accounts' ? (
           <div className="os-users">
+            {users.length === 0 && (
+              <div className="os-empty">本机还没有任何账户，点击右侧「新增用户」建立第一个账户</div>
+            )}
             {users.map((u) => {
               const isActive = u.id === activeId;
               return (
@@ -143,7 +155,10 @@ export default function Login() {
                     setActiveId(u.id);
                     setPassword('');
                     setError('');
-                    if (!u.password) doLogin('');
+                    // 免密账户直接登录：显式传 u，不能依赖 activeUser——
+                    // setState 尚未生效，闭包里的 activeUser 还是上一个账户，
+                    // 同名/免密账户之间切换会登录成别人
+                    if (!u.password) doLogin(u, '');
                   }}
                 >
                   <div className="os-account__avatar" style={{ background: u.avatarColor }}>
@@ -162,10 +177,10 @@ export default function Login() {
                           placeholder="登录口令"
                           value={password}
                           onChange={(e) => setPassword(e.target.value)}
-                          onKeyDown={(e) => e.key === 'Enter' && doLogin(password)}
+                          onKeyDown={(e) => e.key === 'Enter' && doLogin(activeUser, password)}
                         />
                         <span className="os-passbox__divider" />
-                        <button className="os-passbox__go" onClick={() => doLogin(password)} title="登录">
+                        <button className="os-passbox__go" onClick={() => doLogin(activeUser, password)} title="登录">
                           <ArrowRightOutlined />
                         </button>
                       </div>
@@ -233,19 +248,21 @@ export default function Login() {
                   <div className="os-create__field">
                     <div className="os-create__label">所属部门</div>
                     <Select
-                      value={form.department}
+                      value={form.department || undefined}
                       style={{ width: '100%' }}
+                      placeholder={departments.length ? '请选择所属部门' : '请先在系统设置中维护部门'}
                       onChange={(v) => setForm((f) => ({ ...f, department: v }))}
-                      options={DEPARTMENTS.map((d) => ({ value: d, label: d }))}
+                      options={toOptions(departments)}
                     />
                   </div>
                   <div className="os-create__field">
                     <div className="os-create__label">职务</div>
                     <Select
-                      value={form.title}
+                      value={form.title || undefined}
                       style={{ width: '100%' }}
+                      placeholder={titles.length ? '请选择职务' : '请先在系统设置中维护职务'}
                       onChange={(v) => setForm((f) => ({ ...f, title: v }))}
-                      options={TITLES.map((t) => ({ value: t, label: t }))}
+                      options={toOptions(titles)}
                     />
                   </div>
                 </div>
@@ -262,10 +279,11 @@ export default function Login() {
                   <div className="os-create__field">
                     <div className="os-create__label">默认担任角色</div>
                     <Select
-                      value={form.role}
+                      value={form.role || undefined}
                       style={{ width: '100%' }}
+                      placeholder={roles.length ? '请选择默认担任角色' : '请先在系统设置中维护角色'}
                       onChange={(v) => setForm((f) => ({ ...f, role: v }))}
-                      options={allRoles.map((r) => ({ value: r, label: r }))}
+                      options={toOptions(roles)}
                     />
                   </div>
                 </div>

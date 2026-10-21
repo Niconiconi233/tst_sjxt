@@ -5,6 +5,7 @@
 
 mod commands;
 mod db;
+mod dict;
 mod models;
 
 /// 把 rusqlite 错误统一转换为可序列化的 String，便于前端直接展示
@@ -66,6 +67,11 @@ pub fn run() {
             // 待办
             commands::create_todo,
             commands::delete_todo,
+            // 业务字典（下拉选项配置）
+            commands::list_dict,
+            commands::save_dict_item,
+            commands::delete_dict_item,
+            commands::restore_dict_defaults,
         ])
         .run(tauri::generate_context!())
         .expect("启动 Tauri 应用失败");

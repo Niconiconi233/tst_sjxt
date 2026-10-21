@@ -104,6 +104,16 @@
   letter-spacing: 0.5px;
 }
 
+/* 无账户提示：铺满一行，引导点击「新增用户」 */
+.os-empty {
+  flex: 1 0 100%;
+  text-align: center;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.65);
+  padding: 42px 0 6px;
+  letter-spacing: 0.5px;
+}
+
 /* ---------- 头像墙 ---------- */
 .os-users {
   display: flex;

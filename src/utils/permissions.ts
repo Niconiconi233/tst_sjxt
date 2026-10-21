@@ -10,6 +10,7 @@
  * - 廉政监督员 / 资料员 / 外部专家：仅能编写各自职责范围内的文件。
  */
 import { useAuth } from '@/store/authStore';
+import { useDict } from '@/store/dictStore';
 import type { DocCategory, GroupRole } from '@/types';
 
 export type PermissionKey =
@@ -127,15 +128,23 @@ export function allowedCategories(role?: GroupRole | string): DocCategory[] {
 /** 页面内统一取用：按当前登录账户的角色判定 */
 export function usePermission() {
   const { currentUser } = useAuth();
+  const { labels } = useDict();
   const role = (currentUser?.role ?? FALLBACK_ROLE) as GroupRole;
   const policy = getPolicy(role);
+
+  // 与字典取交集：字典里被停用/删掉的类别不再列入「可编写」范围，
+  // 避免界面上出现字典已不存在、却仍被权限放行的类别
+  const dictCategories = labels('doc_category') as DocCategory[];
+  const categories = dictCategories.length
+    ? policy.categories.filter((c) => dictCategories.includes(c))
+    : policy.categories;
 
   return {
     role,
     policy,
     isLeader: role === '审计组长',
     can: (key: PermissionKey) => policy.permissions.includes(key),
-    allowedCategories: policy.categories,
-    canWriteCategory: (category: DocCategory) => policy.categories.includes(category),
+    allowedCategories: categories,
+    canWriteCategory: (category: DocCategory) => categories.includes(category),
   };
 }

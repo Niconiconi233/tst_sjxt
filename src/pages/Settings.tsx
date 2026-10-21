@@ -21,6 +21,7 @@ import {
   Typography,
 } from 'antd';
 import {
+  AppstoreAddOutlined,
   CopyOutlined,
   DatabaseOutlined,
   FolderOpenOutlined,
@@ -33,14 +34,20 @@ import {
 } from '@ant-design/icons';
 import { auditors } from '@/mock/data';
 import { BusyTag } from '@/components/BizTag';
+import DictConfigPanel from '@/components/DictConfigPanel';
 import { useAuth } from '@/store/authStore';
 import { useUserData } from '@/store/userData';
+import { useDict } from '@/store/dictStore';
 import { backend } from '@/services/backend';
+import { getPolicy } from '@/utils/permissions';
 
 export default function Settings() {
   const { message } = App.useApp();
   const { currentUser, logout, storageMode, deletedUsers, restoreUser } = useAuth();
   const { projects, groups, documents, todos, resetDataset } = useUserData();
+  const { items: dictItems, labels } = useDict();
+  const departments = labels('department');
+  const roles = labels('role');
   const [dbPath, setDbPath] = useState('');
   const [backendInfo, setBackendInfo] = useState('');
 
@@ -86,7 +93,7 @@ export default function Settings() {
           type="info"
           showIcon
           style={{ marginBottom: 16, fontSize: 12 }}
-          message="当前为界面骨架版本，系统设置项尚未接入持久化逻辑。组织机构、权限、模板库等将在业务逻辑阶段实现。"
+          message="字典类配置（部门、职务、角色、审计类型、文件类别与模板、审计事项等）已持久化到本机数据库，在「字典与模板配置」页维护后立即生效；机构信息、备份策略等仍为展示内容，将在业务逻辑阶段实现。"
         />
         <Tabs
           items={[
@@ -303,7 +310,9 @@ export default function Settings() {
                     <Descriptions.Item label="内设机构数">12 个</Descriptions.Item>
                     <Descriptions.Item label="在编人员数">{auditors.length} 人</Descriptions.Item>
                     <Descriptions.Item label="业务处室">
-                      财政审计一处、财政审计二处、经济责任审计处、固定资产投资审计处、社会保障审计处、金融审计处、行政事业审计处、企业审计处、计算机审计中心、法规审理处
+                      {departments.length
+                        ? departments.join('、')
+                        : '尚未配置，请在「字典与模板配置」中维护'}
                     </Descriptions.Item>
                   </Descriptions>
                   <Divider style={{ margin: '16px 0 12px' }} />
@@ -333,14 +342,30 @@ export default function Settings() {
               ),
             },
             {
+              key: 'dict',
+              label: (
+                <Space size={4}>
+                  <AppstoreAddOutlined />
+                  字典与模板配置
+                </Space>
+              ),
+              children: <DictConfigPanel />,
+            },
+            {
               key: 'template',
               label: '文书模板库',
               children: (
                 <Descriptions bordered size="small" column={2} styles={{ label: { width: 140 } }}>
-                  <Descriptions.Item label="模板总数">32 套</Descriptions.Item>
-                  <Descriptions.Item label="文书类别">8 类</Descriptions.Item>
+                  <Descriptions.Item label="模板总数">
+                    {dictItems.filter((x) => x.category === 'doc_template' && x.enabled).length} 套
+                  </Descriptions.Item>
+                  <Descriptions.Item label="文书类别">
+                    {dictItems.filter((x) => x.category === 'doc_category' && x.enabled).length} 类
+                  </Descriptions.Item>
                   <Descriptions.Item label="模板版本">2026.01 版</Descriptions.Item>
-                  <Descriptions.Item label="最近更新">2026-01-06</Descriptions.Item>
+                  <Descriptions.Item label="维护入口">
+                    「字典与模板配置」页可增删改模板与类别
+                  </Descriptions.Item>
                   <Descriptions.Item label="支持格式" span={2}>
                     DOCX / PDF / 内置富文本
                   </Descriptions.Item>
@@ -360,14 +385,17 @@ export default function Settings() {
                   size="small"
                   rowKey="role"
                   pagination={false}
-                  dataSource={[
-                    { role: '审计组长', scope: '本组全部项目、成员、文件', op: '建组、分工、签发、归档' },
-                    { role: '主审', scope: '本组底稿与报告', op: '编制、提交复核' },
-                    { role: '审计员', scope: '本人负责事项与底稿', op: '编制、取证登记' },
-                    { role: '复核员', scope: '被指派的文件', op: '复核、退回、签署意见' },
-                    { role: '廉政监督员', scope: '本组廉政记录', op: '登记、报送' },
-                    { role: '系统管理员', scope: '全部数据', op: '机构、人员、模板、备份' },
-                  ]}
+                  dataSource={
+                    roles.length
+                      ? roles.map((r) => ({
+                          role: r,
+                          scope: getPolicy(r).summary,
+                          op: getPolicy(r).permissions.length
+                            ? `${getPolicy(r).permissions.length} 项操作权限 · 可编写 ${getPolicy(r).categories.length} 类文件`
+                            : '无操作权限',
+                        }))
+                      : []
+                  }
                   columns={[
                     { title: '角色', dataIndex: 'role', width: 140, render: (v: string) => <Tag color="blue">{v}</Tag> },
                     { title: '数据范围', dataIndex: 'scope' },

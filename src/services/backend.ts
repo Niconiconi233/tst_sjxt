@@ -13,6 +13,7 @@ import type {
   TodoItem,
 } from '@/types';
 import type { SystemUser } from '@/types/user';
+import type { DictItem } from '@/types/dict';
 
 /** 是否运行在 Tauri 桌面容器内 */
 export function isTauriRuntime(): boolean {
@@ -43,6 +44,12 @@ export const backend = {
   appInfo: () => call<AppInfo>('app_info'),
   dbFilePath: () => call<string>('db_file_path'),
   revealDbFile: () => call<void>('reveal_db_file'),
+
+  /* 业务字典（下拉选项，全库共享） */
+  listDict: () => call<DictItem[]>('list_dict'),
+  saveDictItem: (item: DictItem) => call<DictItem>('save_dict_item', { item }),
+  deleteDictItem: (id: string) => call<void>('delete_dict_item', { id }),
+  restoreDictDefaults: () => call<DictItem[]>('restore_dict_defaults'),
 
   /* 账户 */
   listUsers: () => call<SystemUser[]>('list_users'),

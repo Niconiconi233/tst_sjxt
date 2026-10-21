@@ -24,6 +24,43 @@ pub struct UserRecord {
     pub deleted_at: Option<String>,
 }
 
+/// 业务字典条目（下拉选项，全库共享）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DictItem {
+    pub id: String,
+    /// 字典分类：department / title / role / audit_type / doc_category ...
+    pub category: String,
+    /// 上级值：二级字典（模板→文件类别、审计事项→审计类型）使用，一级为空串
+    pub parent: String,
+    pub label: String,
+    /// 备注：模板说明等辅助文案
+    pub remark: String,
+    pub sort_order: i64,
+    pub enabled: bool,
+    /// 是否为系统预置项（预置项可停用但界面上标注来源）
+    pub builtin: bool,
+}
+
+impl DictItem {
+    pub fn from_json(v: &Json) -> Self {
+        DictItem {
+            id: s(v, "id"),
+            category: s(v, "category"),
+            parent: s(v, "parent"),
+            label: s(v, "label"),
+            remark: s(v, "remark"),
+            sort_order: i(v, "sortOrder"),
+            enabled: if v.get("enabled").is_none() {
+                true
+            } else {
+                b(v, "enabled")
+            },
+            builtin: b(v, "builtin"),
+        }
+    }
+}
+
 /// 单个账户的完整工作台数据（与前端 UserDataset 对应）
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WorkspaceData {

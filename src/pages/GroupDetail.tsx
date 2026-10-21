@@ -35,8 +35,9 @@ import {
 import { AuditorCell, RoleTag } from '@/components/BizTag';
 import AuditorPicker from '@/components/AuditorPicker';
 import { useUserData } from '@/store/userData';
+import { useDict } from '@/store/dictStore';
 import { usePermission } from '@/utils/permissions';
-import { allRoles, auditors } from '@/mock/data';
+import { auditors } from '@/mock/data';
 import { bizColors } from '@/theme';
 import type { GroupMember, GroupRole } from '@/types';
 
@@ -59,7 +60,9 @@ export default function GroupDetail() {
   const navigate = useNavigate();
   const { message } = App.useApp();
   const { groups, documents, updateGroup, removeGroup } = useUserData();
+  const { labels } = useDict();
   const { can } = usePermission();
+  const roles = labels('role');
   const [members, setMembers] = useState<GroupMember[] | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -107,7 +110,7 @@ export default function GroupDetail() {
             size="small"
             value={v}
             style={{ width: '100%' }}
-            options={allRoles.map((x) => ({ value: x, label: x }))}
+            options={roles.map((x) => ({ value: x, label: x }))}
             onChange={(val) => update(r.memberId, { role: val })}
           />
         ) : (

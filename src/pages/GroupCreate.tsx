@@ -35,8 +35,9 @@ import {
 import dayjs from 'dayjs';
 import { AuditorCell, BusyTag, RoleTag } from '@/components/BizTag';
 import AuditorPicker from '@/components/AuditorPicker';
-import { allRoles, auditors, auditItemsByType } from '@/mock/data';
+import { auditors } from '@/mock/data';
 import { useUserData } from '@/store/userData';
+import { useDict } from '@/store/dictStore';
 import { usePermission } from '@/utils/permissions';
 import type { AuditGroup, GroupMember, GroupRole } from '@/types';
 
@@ -47,16 +48,24 @@ const STEPS = [
   { title: '廉政与提交', desc: '纪律要求与确认' },
 ];
 
-const CORE_ROLES: GroupRole[] = ['审计组长', '副组长', '主审', '廉政监督员'];
+/**
+ * 核心岗位：从字典的「审计组角色」中按名称筛出必备岗位。
+ * 角色本身可在系统设置中维护，这里只做展示用的归类。
+ */
+const CORE_ROLE_NAMES = ['审计组长', '副组长', '主审', '廉政监督员'];
 
 export default function GroupCreate() {
   const navigate = useNavigate();
   const { message, modal } = App.useApp();
   const [params] = useSearchParams();
   const { projects, groups, addGroup } = useUserData();
+  const { labels } = useDict();
   const { can } = usePermission();
   const [form] = Form.useForm();
 
+  // 组内角色与审计事项取自后端字典
+  const roles = labels('role');
+  const coreRoles = roles.filter((r) => CORE_ROLE_NAMES.includes(r));
   const [step, setStep] = useState(0);
   const [projectId, setProjectId] = useState<string | undefined>(params.get('project') ?? undefined);
   const [base, setBase] = useState<Record<string, any>>({});
@@ -73,8 +82,9 @@ export default function GroupCreate() {
 
   const project = useMemo(() => projects.find((p) => p.id === projectId), [projectId]);
   const itemOptions = useMemo(
-    () => (project ? (auditItemsByType[project.auditType] ?? []).map((i) => ({ label: i, value: i })) : []),
-    [project],
+    () =>
+      project ? labels('audit_item', project.auditType).map((i) => ({ label: i, value: i })) : [],
+    [project, labels],
   );
 
   const auditorOptions = useMemo(
@@ -183,7 +193,7 @@ export default function GroupCreate() {
           size="small"
           value={v}
           style={{ width: '100%' }}
-          options={allRoles.map((x) => ({ value: x, label: x }))}
+          options={roles.map((x) => ({ value: x, label: x }))}
           onChange={(val) => update(r.memberId, { role: val })}
         />
       ),
@@ -498,7 +508,7 @@ export default function GroupCreate() {
                 <Table.Summary.Row>
                   <Table.Summary.Cell index={0} colSpan={6}>
                     <Space size={8} wrap>
-                      {CORE_ROLES.map((r) => {
+                      {coreRoles.map((r) => {
                         const has = members.some((m) => m.role === r);
                         return (
                           <Tag key={r} color={has ? 'blue' : 'default'} bordered={!has} style={{ fontSize: 11 }}>

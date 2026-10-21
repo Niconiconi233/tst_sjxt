@@ -88,6 +88,21 @@ CREATE TABLE IF NOT EXISTS todos (
     deleted_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_todos_owner ON todos(owner_id);
+
+-- 业务字典：部门、职务、角色、审计类型、文件类别与模板等可配置下拉项。
+-- 全库共享（不带 owner_id），由「系统设置 → 字典与模板配置」维护。
+-- parent 用于二级字典（模板挂在文件类别下、审计事项挂在审计类型下）。
+CREATE TABLE IF NOT EXISTS dict_items (
+    id         TEXT PRIMARY KEY,
+    category   TEXT NOT NULL,
+    parent     TEXT NOT NULL DEFAULT '',
+    label      TEXT NOT NULL,
+    remark     TEXT NOT NULL DEFAULT '',
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    enabled    INTEGER NOT NULL DEFAULT 1,
+    builtin    INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_dict_category ON dict_items(category, parent);
 "#;
 
 /// 判断表中是否已存在某列（用于旧库平滑升级）
@@ -129,6 +144,8 @@ impl AppState {
         )?;
         conn.execute_batch(MIGRATION_SQL)?;
         ensure_deleted_at_columns(&conn)?;
+        // 首次建库时播种业务字典默认值（已存在的条目不会被覆盖）
+        crate::dict::seed_defaults(&conn)?;
         Ok(Self {
             db: Mutex::new(conn),
             db_path: path,

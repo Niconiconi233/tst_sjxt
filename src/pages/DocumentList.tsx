@@ -46,11 +46,10 @@ import {
 import { AuditorAvatar, DocStatusTag, SecretTag } from '@/components/BizTag';
 import { useUserData } from '@/store/userData';
 import { usePermission } from '@/utils/permissions';
-import { auditorMap, docCategories, docVersions } from '@/mock/data';
+import { auditorMap, docVersions } from '@/mock/data';
+import { useDict } from '@/store/dictStore';
 import { bizColors } from '@/theme';
 import type { AuditDocument, DocCategory, DocStatus } from '@/types';
-
-const STATUSES: DocStatus[] = ['草稿', '待复核', '复核中', '已复核', '已签发', '已归档', '被退回'];
 const CAT_ICON: Record<string, React.ReactNode> = {
   审计方案类: <FileProtectOutlined />,
   审计通知类: <FileTextOutlined />,
@@ -62,14 +61,21 @@ const CAT_ICON: Record<string, React.ReactNode> = {
   内部管理类: <FileTextOutlined />,
 };
 
-const WORKFLOW = ['草稿', '待复核', '复核中', '已复核', '已签发', '已归档'];
+/** 流转示意里不展示「被退回」，其余节点按字典顺序 */
+const isFlowNode = (s: string) => s !== '被退回';
 
 export default function DocumentList() {
   const navigate = useNavigate();
   const { message, modal } = App.useApp();
 
   const { documents, projects, groups, removeDocument } = useUserData();
+  const { labels } = useDict();
   const { can, canWriteCategory } = usePermission();
+
+  // 文件类别与状态均取自后端字典，可在系统设置中维护
+  const categories = labels('doc_category');
+  const statuses = labels('doc_status') as DocStatus[];
+  const workflow = statuses.filter(isFlowNode);
 
   const [category, setCategory] = useState<string>('全部');
   const [keyword, setKeyword] = useState('');
@@ -105,7 +111,7 @@ export default function DocumentList() {
       key: '全部',
       icon: <FolderOutlined />,
     },
-    ...docCategories.map((c) => {
+    ...categories.map((c) => {
       const count = documents.filter((d) => d.category === c).length;
       return {
         title: (
@@ -265,7 +271,7 @@ export default function DocumentList() {
   ];
 
   const pagedGrid = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-  const workflowIndex = preview ? Math.max(0, WORKFLOW.indexOf(preview.status)) : 0;
+  const workflowIndex = preview ? Math.max(0, workflow.indexOf(preview.status)) : 0;
 
   return (
     <div className="page">
@@ -299,7 +305,7 @@ export default function DocumentList() {
                 >
                   全部状态（{documents.length}）
                 </Button>
-                {STATUSES.map((s) => {
+                {statuses.map((s) => {
                   const c = documents.filter((d) => d.status === s).length;
                   return (
                     <Button
@@ -401,7 +407,7 @@ export default function DocumentList() {
                   style={{ width: 130 }}
                   value={status}
                   onChange={setStatus}
-                  options={STATUSES.map((s) => ({ value: s, label: s }))}
+                  options={statuses.map((s) => ({ value: s, label: s }))}
                 />
                 <Select
                   placeholder="审计组"
@@ -543,7 +549,7 @@ export default function DocumentList() {
             <Steps
               size="small"
               current={workflowIndex}
-              items={WORKFLOW.map((s) => ({ title: s }))}
+              items={workflow.map((s) => ({ title: s }))}
               style={{ marginBottom: 16 }}
             />
 

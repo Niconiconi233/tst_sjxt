@@ -8,6 +8,7 @@ import 'dayjs/locale/zh-cn';
 import { auditTheme } from '@/theme';
 import { AuthProvider, useAuth } from '@/store/authStore';
 import { UserDataProvider, useUserData } from '@/store/userData';
+import { DictProvider } from '@/store/dictStore';
 import Login from '@/pages/Login';
 import MainLayout from '@/layouts/MainLayout';
 import Workbench from '@/pages/Workbench';
@@ -89,9 +90,12 @@ export default function App() {
     <ConfigProvider locale={zhCN} theme={auditTheme} componentSize="middle">
       <AntdApp>
         <AuthProvider>
-          <HashRouter>
-            <AppShell />
-          </HashRouter>
+          {/* 字典需在登录页之前就绪：新建账户的部门/职务/角色全部来自这里 */}
+          <DictProvider>
+            <HashRouter>
+              <AppShell />
+            </HashRouter>
+          </DictProvider>
         </AuthProvider>
       </AntdApp>
     </ConfigProvider>

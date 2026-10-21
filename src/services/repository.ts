@@ -5,7 +5,7 @@
  * - 浏览器预览：回落到 localStorage，保证界面在无桌面壳时仍可完整演示。
  */
 import { buildSeed, type UserDataset } from '@/mock/seed';
-import { DEMO_USER } from '@/mock/demoUser';
+import { defaultDictItems } from '@/mock/dictDefaults';
 import { backend, isTauriRuntime } from '@/services/backend';
 import type {
   AuditDocument,
@@ -14,12 +14,15 @@ import type {
   TodoItem,
 } from '@/types';
 import type { SystemUser } from '@/types/user';
+import type { DictItem } from '@/types/dict';
 
 const USERS_KEY = 'agms.users';
 const LAST_USER_KEY = 'agms.lastUserId';
 const dataKey = (userId: string) => `agms.data.${userId}`;
 /** 浏览器模式下记录「已注销」的账户（数据块本身保留不动，便于恢复） */
 const MARKED_DELETED_KEY = 'agms.deletedUsers';
+/** 浏览器模式下的业务字典缓存 */
+const DICT_KEY = 'agms.dict';
 
 export type StorageMode = 'sqlite' | 'browser';
 
@@ -56,6 +59,12 @@ export interface DataRepository {
     content: string,
     updatedAt: string,
   ): Promise<void>;
+
+  /* 业务字典（下拉选项，全库共享） */
+  loadDict(): Promise<DictItem[]>;
+  saveDictItem(item: DictItem): Promise<DictItem>;
+  deleteDictItem(id: string): Promise<void>;
+  restoreDictDefaults(): Promise<DictItem[]>;
 }
 
 /** 失败不阻断界面操作，仅记录日志（后续可替换为全局提示） */
@@ -75,12 +84,12 @@ async function safe<T>(op: () => Promise<T>, label: string): Promise<T | undefin
 const sqliteRepo: DataRepository = {
   mode: 'sqlite',
 
+  /**
+   * 账户表：直接返回库中的活跃账户。
+   * 新装系统没有任何预置账户，登录页只显示「新增用户」，由使用人自行建立。
+   */
   async loadUsers() {
-    const users = (await safe(() => backend.listUsers(), 'loadUsers')) ?? [];
-    if (users.length) return users;
-    // 首次启动：写入预置演示账户
-    await safe(() => backend.saveUser(DEMO_USER), 'saveUser(demo)');
-    return [DEMO_USER];
+    return (await safe(() => backend.listUsers(), 'loadUsers')) ?? [];
   },
 
   async loadDeletedUsers() {
@@ -168,6 +177,24 @@ const sqliteRepo: DataRepository = {
       'saveDocumentContent',
     );
   },
+
+  async loadDict() {
+    return (await safe(() => backend.listDict(), 'listDict')) ?? [];
+  },
+
+  async saveDictItem(item) {
+    return (
+      (await safe(() => backend.saveDictItem(item), 'saveDictItem')) ?? item
+    );
+  },
+
+  async deleteDictItem(id) {
+    await safe(() => backend.deleteDictItem(id), 'deleteDictItem');
+  },
+
+  async restoreDictDefaults() {
+    return (await safe(() => backend.restoreDictDefaults(), 'restoreDictDefaults')) ?? [];
+  },
 };
 
 /* ================================================================== */
@@ -195,11 +222,9 @@ function writeJSON(key: string, value: unknown) {
 const browserRepo: DataRepository = {
   mode: 'browser',
 
+  /** 账户表：新装系统为空，登录页只显示「新增用户」 */
   async loadUsers() {
-    const users = readJSON<SystemUser[]>(USERS_KEY, []).filter((u) => !u.deletedAt);
-    if (users.length) return users;
-    writeJSON(USERS_KEY, [DEMO_USER]);
-    return [DEMO_USER];
+    return readJSON<SystemUser[]>(USERS_KEY, []).filter((u) => !u.deletedAt);
   },
 
   async loadDeletedUsers() {
@@ -207,7 +232,7 @@ const browserRepo: DataRepository = {
   },
 
   async saveUser(user) {
-    const users = readJSON<SystemUser[]>(USERS_KEY, [DEMO_USER]);
+    const users = readJSON<SystemUser[]>(USERS_KEY, []);
     const idx = users.findIndex((u) => u.id === user.id);
     writeJSON(USERS_KEY, idx >= 0 ? users.map((u) => (u.id === user.id ? user : u)) : [...users, user]);
   },
@@ -288,6 +313,45 @@ const browserRepo: DataRepository = {
 
   async saveDocumentContent(_ownerId, id, content) {
     localStorage.setItem(`agms.content.${id}`, content);
+  },
+
+  async loadDict() {
+    const cached = readJSON<DictItem[] | null>(DICT_KEY, null);
+    if (cached && cached.length) return cached;
+    const seeded = defaultDictItems();
+    writeJSON(DICT_KEY, seeded);
+    return seeded;
+  },
+
+  async saveDictItem(item) {
+    const list = readJSON<DictItem[]>(DICT_KEY, defaultDictItems());
+    writeJSON(
+      DICT_KEY,
+      list.some((x) => x.id === item.id)
+        ? list.map((x) => (x.id === item.id ? item : x))
+        : [...list, { ...item, id: item.id || `d_${item.category}_${Date.now()}` }],
+    );
+    return item;
+  },
+
+  async deleteDictItem(id) {
+    writeJSON(
+      DICT_KEY,
+      readJSON<DictItem[]>(DICT_KEY, []).filter((x) => x.id !== id),
+    );
+  },
+
+  async restoreDictDefaults() {
+    // 补回缺失的预置项，保留人工新增的条目
+    const list = readJSON<DictItem[]>(DICT_KEY, []);
+    const merged = [...list];
+    for (const d of defaultDictItems()) {
+      if (!merged.some((x) => x.category === d.category && x.parent === d.parent && x.label === d.label)) {
+        merged.push(d);
+      }
+    }
+    writeJSON(DICT_KEY, merged);
+    return merged;
   },
 };
 

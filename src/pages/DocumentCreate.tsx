@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Alert,
@@ -30,9 +30,10 @@ import {
   SaveOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
-import { auditors, docCategories, docTemplates } from '@/mock/data';
+import { auditors } from '@/mock/data';
 import { useAuth } from '@/store/authStore';
 import { useUserData } from '@/store/userData';
+import { useDict } from '@/store/dictStore';
 import { allowedCategories, canDo } from '@/utils/permissions';
 import { bizColors } from '@/theme';
 import { recommendDocType } from '@/utils/docType';
@@ -45,35 +46,31 @@ const STEPS = [
   { title: '流转送审', desc: '复核与签发设置' },
 ];
 
-const TEMPLATE_DESC: Record<string, string> = {
-  审计实施方案: '明确审计目标、范围、内容、重点与人员分工',
-  审计工作方案: '机关层面统一组织实施的总体工作安排',
-  审计通知书: '向被审计单位送达的正式审计文书',
-  审计取证单: '记录单项审计事项取证情况及证据清单',
-  审计工作底稿: '记录审计程序执行过程与结论',
-  审计报告: '汇总审计情况、发现问题与处理意见',
-  审计决定书: '对违反国家规定的财政财务收支行为作出处理',
-  审计整改通知书: '要求被审计单位限期整改审计发现问题',
-  审计组廉政承诺书: '审计组全体成员廉洁从审的书面承诺',
-  审计组会议纪要: '记录审计组业务会议议定事项',
-};
-
 export default function DocumentCreate() {
   const navigate = useNavigate();
   const { message, modal } = App.useApp();
   const [params] = useSearchParams();
   const { currentUser } = useAuth();
   const { projects, groups, documents, addDocument } = useUserData();
+  const { labels, remarkOf } = useDict();
   const [form] = Form.useForm();
 
   const [step, setStep] = useState(0);
   /** 只展示当前角色可编写的类别；默认选中第一个可用类别 */
   const myCategories = useMemo(
-    () => docCategories.filter((c) => allowedCategories(currentUser?.role).includes(c)),
-    [currentUser?.role],
+    () => labels('doc_category').filter((c) => allowedCategories(currentUser?.role).includes(c as DocCategory)),
+    [currentUser?.role, labels],
   );
-  const [category, setCategory] = useState<DocCategory>(myCategories[0] ?? '取证与底稿类');
-  const [template, setTemplate] = useState<string>(docTemplates[category][0]);
+  const [category, setCategory] = useState<DocCategory>(
+    (myCategories[0] as DocCategory) ?? '取证与底稿类',
+  );
+  const [template, setTemplate] = useState<string>('');
+
+  // 模板随类别/字典变化同步：默认选中该类别下的第一个模板
+  useEffect(() => {
+    const list = labels('doc_template', category);
+    setTemplate((cur) => (cur && list.includes(cur) ? cur : list[0] ?? ''));
+  }, [category, labels]);
   const [snapshot, setSnapshot] = useState<Record<string, any>>({});
   const [flow, setFlow] = useState<'draft' | 'review' | 'issue'>('review');
 
@@ -221,8 +218,8 @@ export default function DocumentCreate() {
                   size="small"
                   type={category === c ? 'primary' : 'default'}
                   onClick={() => {
-                    setCategory(c);
-                    setTemplate(docTemplates[c][0]);
+                    setCategory(c as DocCategory);
+                    setTemplate(labels('doc_template', c)[0] ?? '');
                   }}
                 >
                   {c}
@@ -234,7 +231,7 @@ export default function DocumentCreate() {
               2. 选择文件模板
             </Typography.Title>
             <Row gutter={[12, 12]}>
-              {docTemplates[category].map((t) => (
+              {labels('doc_template', category).map((t) => (
                 <Col span={8} key={t}>
                   <div
                     onClick={() => setTemplate(t)}
@@ -253,7 +250,7 @@ export default function DocumentCreate() {
                       {template === t && <CheckCircleOutlined style={{ color: bizColors.primary }} />}
                     </div>
                     <div className="text-muted" style={{ fontSize: 11, marginTop: 6, lineHeight: 1.5 }}>
-                      {TEMPLATE_DESC[t] ?? '按标准格式套用模板编制'}
+                      {remarkOf('doc_template', t, category) || '按标准格式套用模板编制'}
                     </div>
                   </div>
                 </Col>

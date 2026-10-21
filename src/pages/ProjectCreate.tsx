@@ -23,23 +23,12 @@ import {
 } from 'antd';
 import { AuditOutlined, CheckCircleOutlined, LeftOutlined, SaveOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
-import { auditors, auditItemsByType } from '@/mock/data';
+import { auditors } from '@/mock/data';
 import { useAuth } from '@/store/authStore';
 import { useUserData } from '@/store/userData';
+import { useDict } from '@/store/dictStore';
 import { usePermission } from '@/utils/permissions';
 import type { AuditProject, AuditType, ProjectLevel } from '@/types';
-
-const AUDIT_TYPES: AuditType[] = [
-  '预算执行审计',
-  '经济责任审计',
-  '专项资金审计',
-  '财务收支审计',
-  '绩效审计',
-  '合规审计',
-  '跟踪审计',
-];
-
-const UNIT_NATURES = ['行政机关', '事业单位', '国有企业', '社会团体', '其他组织'];
 
 const STEPS = [
   { title: '基本信息', desc: '项目标识与类型' },
@@ -53,16 +42,25 @@ export default function ProjectCreate() {
   const { message, modal } = App.useApp();
   const { currentUser } = useAuth();
   const { addProject } = useUserData();
+  const { labels } = useDict();
   const { can } = usePermission();
   const [form] = Form.useForm();
   const [step, setStep] = useState(0);
   const [snapshot, setSnapshot] = useState<Record<string, any>>({});
   const [submitting, setSubmitting] = useState(false);
 
+  // 审计类型、单位性质、项目级别、审计事项均取自后端字典
+  const auditTypes = labels('audit_type');
+  const unitNatures = labels('unit_nature');
+  const projectLevels = labels('project_level');
+
   const auditType = Form.useWatch('auditType', form) ?? (snapshot.auditType as AuditType);
   const keyItemOptions = useMemo(
-    () => (auditType ? (auditItemsByType[auditType] ?? []).map((i) => ({ label: i, value: i })) : []),
-    [auditType],
+    () =>
+      auditType
+        ? labels('audit_item', auditType).map((i) => ({ label: i, value: i }))
+        : [],
+    [auditType, labels],
   );
 
   const auditorOptions = auditors.map((a) => ({
@@ -202,9 +200,9 @@ export default function ProjectCreate() {
           requiredMark
           initialValues={{
             year: 2026,
-            level: '二级',
-            unitNature: '行政机关',
-            auditType: '预算执行审计',
+            level: projectLevels[1] ?? projectLevels[0],
+            unitNature: unitNatures[0],
+            auditType: auditTypes[0],
             needExpert: false,
             ownerId: currentUser?.id ?? auditors[0].id,
             tags: [],
@@ -243,7 +241,7 @@ export default function ProjectCreate() {
               </Col>
               <Col span={6}>
                 <Form.Item name="auditType" label="审计类型" rules={[{ required: true }]}>
-                  <Select options={AUDIT_TYPES.map((t) => ({ label: t, value: t }))} />
+                  <Select options={auditTypes.map((t) => ({ label: t, value: t }))} />
                 </Form.Item>
               </Col>
               <Col span={6}>
@@ -251,7 +249,7 @@ export default function ProjectCreate() {
                   <Radio.Group
                     optionType="button"
                     buttonStyle="solid"
-                    options={(['一级', '二级', '三级'] as ProjectLevel[]).map((l) => ({
+                    options={(projectLevels as ProjectLevel[]).map((l) => ({
                       label: l,
                       value: l,
                     }))}
@@ -260,7 +258,7 @@ export default function ProjectCreate() {
               </Col>
               <Col span={6}>
                 <Form.Item name="unitNature" label="被审计单位性质">
-                  <Select options={UNIT_NATURES.map((n) => ({ label: n, value: n }))} />
+                  <Select options={unitNatures.map((n) => ({ label: n, value: n }))} />
                 </Form.Item>
               </Col>
             </Row>
