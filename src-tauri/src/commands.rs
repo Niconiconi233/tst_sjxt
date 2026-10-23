@@ -158,6 +158,104 @@ pub fn restore_dict_defaults(state: State<'_, AppState>) -> CmdResult<Vec<DictIt
     list_dict(state)
 }
 
+/* ------------------------------------------------------------------ */
+/* 审计人员名册                                                        */
+/* ------------------------------------------------------------------ */
+
+const AUDITOR_COLUMNS: &str = "id, name, code, gender, department, title, qualification,
+    phone, email, busy_projects, capable_roles, avatar_color,
+    sort_order, enabled, builtin";
+
+fn auditor_mapper(r: &rusqlite::Row<'_>) -> rusqlite::Result<crate::models::AuditorRecord> {
+    crate::models::AuditorRecord::from_row(r)
+}
+
+/// 全量人员名册（含已停用，前端按需过滤）
+#[tauri::command]
+pub fn list_auditors(state: State<'_, AppState>) -> CmdResult<Vec<crate::models::AuditorRecord>> {
+    let conn = lock(&state);
+    let mut stmt = db_err!(conn.prepare(&format!(
+        "SELECT {AUDITOR_COLUMNS} FROM auditors
+         ORDER BY sort_order ASC, id ASC"
+    )))?;
+    let rows = db_err!(stmt.query_map([], auditor_mapper))?;
+    Ok(rows.filter_map(|x| x.ok()).collect())
+}
+
+/// 新增或更新人员（幂等 upsert）
+#[tauri::command]
+pub fn save_auditor(
+    state: State<'_, AppState>,
+    item: Json,
+) -> CmdResult<crate::models::AuditorRecord> {
+    let rec = crate::models::AuditorRecord::from_json(&item);
+    if rec.name.is_empty() {
+        return Err("人员姓名不能为空".into());
+    }
+    let id = if rec.id.is_empty() {
+        format!("au_{}", chrono_like_stamp())
+    } else {
+        rec.id
+    };
+    let conn = lock(&state);
+    db_err!(conn.execute(
+        "INSERT INTO auditors
+         (id, name, code, gender, department, title, qualification, phone, email,
+          capable_roles, busy_projects, avatar_color, sort_order, enabled, builtin)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+         ON CONFLICT(id) DO UPDATE SET
+           name = excluded.name,
+           code = excluded.code,
+           gender = excluded.gender,
+           department = excluded.department,
+           title = excluded.title,
+           qualification = excluded.qualification,
+           phone = excluded.phone,
+           email = excluded.email,
+           capable_roles = excluded.capable_roles,
+           busy_projects = excluded.busy_projects,
+           avatar_color = excluded.avatar_color,
+           sort_order = excluded.sort_order,
+           enabled = excluded.enabled,
+           builtin = excluded.builtin",
+        rusqlite::params![
+            id,
+            rec.name,
+            rec.code,
+            rec.gender,
+            rec.department,
+            rec.title,
+            rec.qualification,
+            rec.phone,
+            rec.email,
+            rec.capable_roles_raw,
+            rec.busy_projects,
+            rec.avatar_color,
+            rec.sort_order,
+            rec.enabled as i32,
+            rec.builtin as i32
+        ],
+    ))?;
+    Ok(crate::models::AuditorRecord { id, ..rec })
+}
+
+/// 删除人员
+#[tauri::command]
+pub fn delete_auditor(state: State<'_, AppState>, id: String) -> CmdResult<()> {
+    let conn = lock(&state);
+    db_err!(conn.execute("DELETE FROM auditors WHERE id = ?1", rusqlite::params![id]))?;
+    Ok(())
+}
+
+/// 补回系统预置人员：只补缺失的 id，不动人工新增与已改动的条目
+#[tauri::command]
+pub fn restore_default_auditors(state: State<'_, AppState>) -> CmdResult<Vec<crate::models::AuditorRecord>> {
+    let conn = lock(&state);
+    db_err!(crate::auditors::seed_defaults(&conn))?;
+    drop(conn);
+    list_auditors(state)
+}
+
 /// 生成字典条目 id 用的时间戳片段（避免引入额外依赖）
 fn chrono_like_stamp() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -714,4 +812,64 @@ pub fn reset_workspace(state: State<'_, AppState>, owner_id: String) -> CmdResul
 #[tauri::command]
 pub fn db_file_path(state: State<'_, AppState>) -> String {
     state.db_path.to_string_lossy().to_string()
+}
+
+/* ------------------------------------------------------------------ */
+/* 导出文件落盘                                                        */
+/* ------------------------------------------------------------------ */
+
+/// 把前端导出的 Office 文件写入用户选定的路径。
+///
+/// 这里走自定义命令而不是 fs 插件：fs 插件的 scope 只覆盖固定系统目录，
+/// 用户把文件另存到 U 盘、共享盘或其他分区时会报 `fs.write_file not allowed`。
+/// 内容用 base64 传输，避免几 MB 的字节数组在 IPC 里被序列化成超长数字数组。
+#[tauri::command]
+pub fn write_export_file(path: String, data_base64: String) -> Result<String, String> {
+    use base64::Engine as _;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data_base64.as_bytes())
+        .map_err(|e| format!("导出内容解码失败：{e}"))?;
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        if !parent.as_os_str().is_empty() && !parent.exists() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败：{e}"))?;
+        }
+    }
+    std::fs::write(&path, bytes).map_err(|e| format!("写入文件失败：{e}"))?;
+    Ok(path)
+}
+
+#[cfg(test)]
+mod export_tests {
+    use super::write_export_file;
+
+    #[test]
+    fn decodes_and_writes_bytes() {
+        let dir = std::env::temp_dir().join("audit-workspace-export-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("示例.docx");
+        // "你好" 的 base64
+        let written =
+            write_export_file(path.to_string_lossy().to_string(), "5L2g5aW9".into()).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), "你好".as_bytes());
+        assert!(written.ends_with("示例.docx"));
+        std::fs::remove_file(&path).ok();
+        std::fs::remove_dir(&dir).ok();
+    }
+
+    #[test]
+    fn creates_missing_parent_directory() {
+        let dir = std::env::temp_dir().join("audit-workspace-export-nested/a/b");
+        let path = dir.join("x.xlsx");
+        let _ = std::fs::remove_dir_all(std::env::temp_dir().join("audit-workspace-export-nested"));
+        write_export_file(path.to_string_lossy().to_string(), "QQ==".into()).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"A");
+        let _ = std::fs::remove_dir_all(std::env::temp_dir().join("audit-workspace-export-nested"));
+    }
+
+    #[test]
+    fn rejects_invalid_base64() {
+        let path = std::env::temp_dir().join("audit-invalid.bin");
+        assert!(write_export_file(path.to_string_lossy().to_string(), "!!!".into()).is_err());
+        assert!(!path.exists());
+    }
 }

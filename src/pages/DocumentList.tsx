@@ -46,8 +46,9 @@ import {
 import { AuditorAvatar, DocStatusTag, SecretTag } from '@/components/BizTag';
 import { useUserData } from '@/store/userData';
 import { usePermission } from '@/utils/permissions';
-import { auditorMap, docVersions } from '@/mock/data';
+import { docVersions } from '@/mock/data';
 import { useDict } from '@/store/dictStore';
+import { useAuditors } from '@/store/auditorStore';
 import { bizColors } from '@/theme';
 import type { AuditDocument, DocCategory, DocStatus } from '@/types';
 const CAT_ICON: Record<string, React.ReactNode> = {
@@ -70,6 +71,7 @@ export default function DocumentList() {
 
   const { documents, projects, groups, removeDocument } = useUserData();
   const { labels } = useDict();
+  const { auditorMap } = useAuditors();
   const { can, canWriteCategory } = usePermission();
 
   // 文件类别与状态均取自后端字典，可在系统设置中维护
@@ -479,7 +481,7 @@ export default function DocumentList() {
                           }}
                         >
                           <Space size={4}>
-                            <AuditorAvatar auditor={auditorMap[d.authorId] ?? Object.values(auditorMap)[0]} size={20} />
+                            <AuditorAvatar auditor={auditorMap[d.authorId]} size={20} />
                             <span style={{ fontSize: 11 }}>{d.authorName}</span>
                           </Space>
                           <span className="text-muted" style={{ fontSize: 11 }}>
@@ -564,7 +566,7 @@ export default function DocumentList() {
             </div>
             <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 16 }} className="text-muted">
               <Space size={8} style={{ fontSize: 12 }}>
-                <AuditorAvatar auditor={auditorMap[preview.authorId] ?? Object.values(auditorMap)[0]} size={22} />
+                <AuditorAvatar auditor={auditorMap[preview.authorId]} size={22} />
                 起草：{preview.authorName} · {preview.createdAt}
               </Space>
               <span style={{ fontSize: 12 }}>复核：{preview.reviewerName ?? '待指派'}</span>

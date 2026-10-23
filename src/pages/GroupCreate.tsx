@@ -35,11 +35,11 @@ import {
 import dayjs from 'dayjs';
 import { AuditorCell, BusyTag, RoleTag } from '@/components/BizTag';
 import AuditorPicker from '@/components/AuditorPicker';
-import { auditors } from '@/mock/data';
 import { useUserData } from '@/store/userData';
 import { useDict } from '@/store/dictStore';
+import { useAuditors } from '@/store/auditorStore';
 import { usePermission } from '@/utils/permissions';
-import type { AuditGroup, GroupMember, GroupRole } from '@/types';
+import type { AuditGroup, Auditor, GroupMember, GroupRole } from '@/types';
 
 const STEPS = [
   { title: '选择项目', desc: '关联审计项目' },
@@ -60,10 +60,11 @@ export default function GroupCreate() {
   const [params] = useSearchParams();
   const { projects, groups, addGroup } = useUserData();
   const { labels } = useDict();
+  const { auditors } = useAuditors();
   const { can } = usePermission();
   const [form] = Form.useForm();
 
-  // 组内角色与审计事项取自后端字典
+  // 组内角色与审计事项取自后端字典；人员取自后端名册
   const roles = labels('role');
   const coreRoles = roles.filter((r) => CORE_ROLE_NAMES.includes(r));
   const [step, setStep] = useState(0);
@@ -109,14 +110,15 @@ export default function GroupCreate() {
     setMembers((prev) => {
       const next = [...prev];
       pairs.forEach(([id, role]) => {
-        if (!id) return;
+        const auditor = auditors.find((a) => a.id === id);
+        if (!id || !auditor) return;
         const exist = next.find((m) => m.memberId === id);
         if (exist) {
           exist.role = role;
         } else {
           next.unshift({
             memberId: id,
-            auditor: auditors.find((a) => a.id === id)!,
+            auditor,
             role,
             duty: role === '审计组长' ? '全面负责审计组工作' : '',
             responsibleItems: [],
@@ -442,20 +444,21 @@ export default function GroupCreate() {
                       allowClear
                       value={f.value}
                       onChange={f.set}
-                      options={auditorOptions.filter((o) => {
-                        const a = auditors.find((x) => x.id === o.value)!;
-                        return a.capableRoles.includes(f.label as GroupRole);
-                      })}
+                      options={auditorOptions.filter((o) =>
+                        auditors
+                          .find((x) => x.id === o.value)
+                          ?.capableRoles.includes(f.label as GroupRole),
+                      )}
                     />
                     <div className="text-muted" style={{ fontSize: 11, marginTop: 4 }}>
                       {f.tip}
                     </div>
-                    {f.value && (
+                    {f.value && auditors.some((a) => a.id === f.value) && (
                       <div style={{ marginTop: 6 }}>
                         <Space size={4} wrap>
                           <BusyTag count={auditors.find((a) => a.id === f.value)!.busyProjects} />
                           <Tag style={{ fontSize: 11, marginInlineEnd: 0 }}>
-                            {auditors.find((a) => a.id === f.value)!.qualification ?? '—'}
+                            {auditors.find((a) => a.id === f.value)!.qualification || '—'}
                           </Tag>
                         </Space>
                       </div>
@@ -628,12 +631,15 @@ export default function GroupCreate() {
         excludeIds={lockedIds}
         onCancel={() => setPickerOpen(false)}
         onOk={(ids) => {
-          const added = ids.filter((i) => !members.some((m) => m.memberId === i));
+          const added = ids
+            .filter((i) => !members.some((m) => m.memberId === i))
+            .map((id) => ({ id, auditor: auditors.find((a) => a.id === id) }))
+            .filter((x): x is { id: string; auditor: Auditor } => !!x.auditor);
           setMembers((prev) => [
             ...prev,
-            ...added.map((id) => ({
+            ...added.map(({ id, auditor }) => ({
               memberId: id,
-              auditor: auditors.find((a) => a.id === id)!,
+              auditor,
               role: '审计员' as GroupRole,
               duty: '',
               responsibleItems: [],

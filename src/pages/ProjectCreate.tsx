@@ -23,10 +23,10 @@ import {
 } from 'antd';
 import { AuditOutlined, CheckCircleOutlined, LeftOutlined, SaveOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
-import { auditors } from '@/mock/data';
 import { useAuth } from '@/store/authStore';
 import { useUserData } from '@/store/userData';
 import { useDict } from '@/store/dictStore';
+import { useAuditors } from '@/store/auditorStore';
 import { usePermission } from '@/utils/permissions';
 import type { AuditProject, AuditType, ProjectLevel } from '@/types';
 
@@ -43,6 +43,7 @@ export default function ProjectCreate() {
   const { currentUser } = useAuth();
   const { addProject } = useUserData();
   const { labels } = useDict();
+  const { auditors } = useAuditors();
   const { can } = usePermission();
   const [form] = Form.useForm();
   const [step, setStep] = useState(0);
@@ -63,10 +64,14 @@ export default function ProjectCreate() {
     [auditType, labels],
   );
 
-  const auditorOptions = auditors.map((a) => ({
-    label: `${a.name}（${a.department} · ${a.title}）`,
-    value: a.id,
-  }));
+  const auditorOptions = useMemo(
+    () =>
+      auditors.map((a) => ({
+        label: `${a.name}（${a.department} · ${a.title}）`,
+        value: a.id,
+      })),
+    [auditors],
+  );
 
   const STEP_FIELDS: string[][] = [
     ['name', 'code', 'year', 'auditType', 'level', 'auditedUnit', 'unitNature'],
@@ -204,7 +209,7 @@ export default function ProjectCreate() {
             unitNature: unitNatures[0],
             auditType: auditTypes[0],
             needExpert: false,
-            ownerId: currentUser?.id ?? auditors[0].id,
+            ownerId: currentUser?.id ?? auditors[0]?.id,
             tags: [],
           }}
         >

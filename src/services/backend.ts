@@ -14,6 +14,7 @@ import type {
 } from '@/types';
 import type { SystemUser } from '@/types/user';
 import type { DictItem } from '@/types/dict';
+import type { AuditorRecord } from '@/types/auditor';
 
 /** 是否运行在 Tauri 桌面容器内 */
 export function isTauriRuntime(): boolean {
@@ -50,6 +51,12 @@ export const backend = {
   saveDictItem: (item: DictItem) => call<DictItem>('save_dict_item', { item }),
   deleteDictItem: (id: string) => call<void>('delete_dict_item', { id }),
   restoreDictDefaults: () => call<DictItem[]>('restore_dict_defaults'),
+
+  /* 审计人员名册（全库共享） */
+  listAuditors: () => call<AuditorRecord[]>('list_auditors'),
+  saveAuditor: (item: AuditorRecord) => call<AuditorRecord>('save_auditor', { item }),
+  deleteAuditor: (id: string) => call<void>('delete_auditor', { id }),
+  restoreDefaultAuditors: () => call<AuditorRecord[]>('restore_default_auditors'),
 
   /* 账户 */
   listUsers: () => call<SystemUser[]>('list_users'),

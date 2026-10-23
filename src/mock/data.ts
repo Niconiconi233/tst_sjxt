@@ -1,3 +1,4 @@
+import { defaultAuditors } from '@/mock/auditorDefaults';
 import type {
   AuditDocument,
   AuditGroup,
@@ -12,46 +13,15 @@ import type {
 
 /* ============================ 人员库 ============================ */
 
-const RAW_AUDITORS: Array<Partial<Auditor> & { name: string; department: string }> = [
-  { name: '陈志远', department: '财政审计一处', title: '处长', qualification: '高级审计师', code: 'SJ-1001', capableRoles: ['审计组长', '副组长', '主审'], busyProjects: 2 },
-  { name: '李文静', department: '财政审计一处', title: '副处长', qualification: '高级审计师', code: 'SJ-1002', capableRoles: ['审计组长', '主审', '复核员'], busyProjects: 1 },
-  { name: '王建国', department: '经济责任审计处', title: '调研员', qualification: '审计师', code: 'SJ-1003', capableRoles: ['副组长', '主审', '审计员'], busyProjects: 1 },
-  { name: '赵慧敏', department: '固定资产投资审计处', title: '主任科员', qualification: '审计师', code: 'SJ-1004', capableRoles: ['审计员', '资料员'], busyProjects: 0 },
-  { name: '刘振华', department: '财政审计二处', title: '副调研员', qualification: '高级审计师', code: 'SJ-1005', capableRoles: ['复核员', '审计员'], busyProjects: 1 },
-  { name: '孙雅芳', department: '社会保障审计处', title: '主任科员', qualification: '审计师', code: 'SJ-1006', capableRoles: ['主审', '审计员'], busyProjects: 2 },
-  { name: '周立新', department: '金融审计处', title: '处长', qualification: '注册会计师', code: 'SJ-1007', capableRoles: ['审计组长', '副组长'], busyProjects: 1 },
-  { name: '吴彩虹', department: '行政事业审计处', title: '副处长', qualification: '审计师', code: 'SJ-1008', capableRoles: ['副组长', '廉政监督员'], busyProjects: 0 },
-  { name: '郑海涛', department: '计算机审计中心', title: '工程师', qualification: '信息系统审计师', code: 'SJ-1009', capableRoles: ['审计员', '外部专家'], busyProjects: 1 },
-  { name: '冯丽娟', department: '财政审计一处', title: '主任科员', qualification: '审计师', code: 'SJ-1010', capableRoles: ['审计员', '资料员'], busyProjects: 0 },
-  { name: '马俊峰', department: '企业审计处', title: '副处长', qualification: '高级审计师', code: 'SJ-1011', capableRoles: ['审计组长', '主审'], busyProjects: 1 },
-  { name: '钱思远', department: '法规审理处', title: '调研员', qualification: '律师', code: 'SJ-1012', capableRoles: ['复核员', '外部专家'], busyProjects: 0 },
-  { name: '谭雪梅', department: '社会保障审计处', title: '主任科员', qualification: '审计师', code: 'SJ-1013', capableRoles: ['审计员'], busyProjects: 1 },
-  { name: '何伟民', department: '固定资产投资审计处', title: '副调研员', qualification: '造价工程师', code: 'SJ-1014', capableRoles: ['外部专家', '审计员'], busyProjects: 0 },
-  { name: '杨舒涵', department: '计算机审计中心', title: '助理工程师', qualification: '数据分析师', code: 'SJ-1015', capableRoles: ['审计员', '资料员'], busyProjects: 1 },
-  { name: '徐明辉', department: '经济责任审计处', title: '主任科员', qualification: '审计师', code: 'SJ-1016', capableRoles: ['审计员', '廉政监督员'], busyProjects: 0 },
-  { name: '罗秀英', department: '行政事业审计处', title: '调研员', qualification: '高级审计师', code: 'SJ-1017', capableRoles: ['复核员', '主审'], busyProjects: 0 },
-  { name: '高天宇', department: '金融审计处', title: '主任科员', qualification: '审计师', code: 'SJ-1018', capableRoles: ['审计员'], busyProjects: 2 },
-];
-
-const AVATAR_COLORS = ['#1a5fb4', '#0f7b8a', '#7a3fa8', '#b7791f', '#1a7f4b', '#b42318', '#41546b'];
-
-export const auditors: Auditor[] = RAW_AUDITORS.map((a, i) => ({
-  id: `A${1000 + i + 1}`,
-  name: a.name,
-  code: a.code ?? `SJ-${1001 + i}`,
-  gender: i % 3 === 1 ? '女' : '男',
-  department: a.department,
-  title: a.title ?? '审计员',
-  qualification: a.qualification,
-  phone: `138${String(10000000 + i * 1234567).slice(0, 8)}`,
-  email: `user${i + 1}@audit.gov.cn`,
-  capableRoles: (a.capableRoles ?? ['审计员']) as GroupRole[],
-  busyProjects: a.busyProjects ?? 0,
-  avatarColor: AVATAR_COLORS[i % AVATAR_COLORS.length],
-}));
-
-export const auditorMap: Record<string, Auditor> = Object.fromEntries(
-  auditors.map((a) => [a.id, a]),
+/**
+ * 示例数据使用的人员快照。
+ *
+ * 运行时的名册来自数据库（`useAuditors`），这里仅为预置示例项目 / 审计组 / 文件
+ * 提供人员引用。数据与 Rust 侧建库播种的默认名册同源（生成规则一致、id 一致），
+ * 因此示例数据里的 A1001… 与数据库里是同一批人。
+ */
+const seedAuditorMap: Record<string, Auditor> = Object.fromEntries(
+  defaultAuditors().map((a) => [a.id, { ...a, gender: a.gender === '女' ? '女' : '男' } as Auditor]),
 );
 
 /* ============================ 审计项目 ============================ */
@@ -257,7 +227,7 @@ export const projects: AuditProject[] = [
 /* ============================ 审计组 ============================ */
 
 function mkMember(memberId: string, role: GroupRole, duty: string, items: string[], onSite = true): GroupMember {
-  const auditor = auditorMap[memberId];
+  const auditor = seedAuditorMap[memberId];
   return {
     memberId,
     auditor,
@@ -451,8 +421,8 @@ function mkDoc(
     groupName: extra.groupName,
     status,
     secretLevel: extra.secretLevel ?? '内部',
-    authorId: auditorMap[author]?.id ?? author,
-    authorName: auditorMap[author]?.name ?? author,
+    authorId: seedAuditorMap[author]?.id ?? author,
+    authorName: seedAuditorMap[author]?.name ?? author,
     reviewerName: extra.reviewerName,
     version: extra.version ?? 'V1.0',
     createdAt: extra.createdAt ?? '2026-03-05 09:30',

@@ -4,7 +4,9 @@ import { App, Button, Space, Spin, Tag, Tooltip, Typography } from 'antd';
 import {
   ArrowLeftOutlined,
   CloudSyncOutlined,
+  DownloadOutlined,
   SaveOutlined,
+  UploadOutlined,
   WarningOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
@@ -14,6 +16,13 @@ import { useUserData } from '@/store/userData';
 import { repo } from '@/services/repository';
 import { usePermission } from '@/utils/permissions';
 import { DOC_TYPE_LABEL, resolveDocType } from '@/utils/docType';
+import {
+  docSnapshotToDocxBlob,
+  docxToSnapshot,
+  sheetSnapshotToXlsxBlob,
+  xlsxToSnapshot,
+} from '@/utils/officeConvert';
+import { safeFileName, saveBlobAs } from '@/utils/exportFile';
 import '@/styles/office.css';
 
 /**
@@ -37,6 +46,10 @@ export default function OfficeEditor() {
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<string>(doc?.updatedAt ?? '');
+  /** 导入文件后需要重建编辑器实例，自增这个值即可 */
+  const [editorKey, setEditorKey] = useState(0);
+  const [busy, setBusy] = useState<'import' | 'export' | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const docType = doc ? resolveDocType(doc) : 'sheet';
 
@@ -112,6 +125,65 @@ export default function OfficeEditor() {
     });
   };
 
+  /** 导入 Word / Excel 文件，转换后覆盖当前正文 */
+  const handleImport = useCallback(
+    async (file: File) => {
+      if (!doc || !currentUser) return;
+      setBusy('import');
+      try {
+        const snapshot =
+          docType === 'document'
+            ? await docxToSnapshot(file, doc.title)
+            : await xlsxToSnapshot(file, doc.title);
+        const text = JSON.stringify(snapshot);
+        const now = dayjs().format('YYYY-MM-DD HH:mm');
+        await repo.saveDocumentContent(currentUser.id, doc.id, text, now);
+        updateDocument(doc.id, { hasContent: true, updatedAt: now });
+        setContent(text);
+        setEditorKey((k) => k + 1);
+        setSavedAt(now);
+        setDirty(false);
+        message.success(`已导入《${file.name}》，请核对排版后再保存`);
+      } catch (err) {
+        console.error(err);
+        message.error(`导入失败：${err instanceof Error ? err.message : String(err)}`);
+      } finally {
+        setBusy(null);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+      }
+    },
+    [doc, currentUser, docType, message, updateDocument],
+  );
+
+  /** 导出当前正文为 .docx / .xlsx */
+  const handleExport = useCallback(async () => {
+    if (!doc) return;
+    // 可编辑时取编辑器实时快照，只读时退回已保存内容
+    const snapshot = editorRef.current?.getSnapshot() ?? content;
+    if (!snapshot) {
+      message.warning('正文尚未就绪，请稍候再导出');
+      return;
+    }
+    setBusy('export');
+    try {
+      const name = safeFileName(doc.title);
+      const saved =
+        docType === 'document'
+          ? await saveBlobAs(await docSnapshotToDocxBlob(snapshot, doc.title), `${name}.docx`, [
+              { name: 'Word 文档', extensions: ['docx'] },
+            ])
+          : await saveBlobAs(await sheetSnapshotToXlsxBlob(snapshot, doc.title), `${name}.xlsx`, [
+              { name: 'Excel 工作簿', extensions: ['xlsx'] },
+            ]);
+      if (saved) message.success(`已导出到 ${saved}`);
+    } catch (err) {
+      console.error(err);
+      message.error(`导出失败：${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setBusy(null);
+    }
+  }, [doc, docType, content, message]);
+
   /** 无编辑权限时，从快照里抽取纯文本做只读查看 */
   const plainText = (() => {
     if (!content) return '';
@@ -168,6 +240,34 @@ export default function OfficeEditor() {
               {saving ? '保存中…' : dirty ? '有未保存修改' : savedAt ? `已保存 ${savedAt}` : '尚未保存'}
             </span>
           </Tooltip>
+          <Tooltip
+            title={
+              editable
+                ? docType === 'document'
+                  ? '从 .docx 导入，覆盖当前正文'
+                  : '从 .xlsx 导入，覆盖当前正文'
+                : '当前角色无编辑权限，不能导入'
+            }
+          >
+            <Button
+              icon={<UploadOutlined />}
+              loading={busy === 'import'}
+              disabled={!editable || busy !== null}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              导入
+            </Button>
+          </Tooltip>
+          <Tooltip title={docType === 'document' ? '导出为 Word（.docx）' : '导出为 Excel（.xlsx）'}>
+            <Button
+              icon={<DownloadOutlined />}
+              loading={busy === 'export'}
+              disabled={busy !== null}
+              onClick={() => void handleExport()}
+            >
+              导出
+            </Button>
+          </Tooltip>
           {editable ? (
             <Button
               type="primary"
@@ -187,6 +287,27 @@ export default function OfficeEditor() {
         </Space>
       </header>
 
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept={docType === 'document' ? '.docx' : '.xlsx,.xls'}
+        style={{ display: 'none' }}
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (!file) return;
+          modal.confirm({
+            title: '导入将覆盖当前正文',
+            content: `确定用《${file.name}》替换当前文件内容吗？未保存的修改会丢失。`,
+            okText: '导入并覆盖',
+            cancelText: '取消',
+            onOk: () => handleImport(file),
+            onCancel: () => {
+              if (fileInputRef.current) fileInputRef.current.value = '';
+            },
+          });
+        }}
+      />
+
       <div className="office-body">
         {content === null ? (
           <div className="office-loading">
@@ -195,6 +316,7 @@ export default function OfficeEditor() {
           </div>
         ) : editable ? (
           <UniverEditor
+            resetKey={editorKey}
             ref={editorRef}
             docType={docType}
             content={content}

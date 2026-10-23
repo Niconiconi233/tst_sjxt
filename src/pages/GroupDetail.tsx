@@ -37,9 +37,9 @@ import AuditorPicker from '@/components/AuditorPicker';
 import { useUserData } from '@/store/userData';
 import { useDict } from '@/store/dictStore';
 import { usePermission } from '@/utils/permissions';
-import { auditors } from '@/mock/data';
+import { useAuditors } from '@/store/auditorStore';
 import { bizColors } from '@/theme';
-import type { GroupMember, GroupRole } from '@/types';
+import type { Auditor, GroupMember, GroupRole } from '@/types';
 
 const STATUS_COLOR: Record<string, string> = {
   组建中: '#8a94a6',
@@ -61,6 +61,7 @@ export default function GroupDetail() {
   const { message } = App.useApp();
   const { groups, documents, updateGroup, removeGroup } = useUserData();
   const { labels } = useDict();
+  const { auditors } = useAuditors();
   const { can } = usePermission();
   const roles = labels('role');
   const [members, setMembers] = useState<GroupMember[] | null>(null);
@@ -499,12 +500,15 @@ export default function GroupDetail() {
         onCancel={() => setPickerOpen(false)}
         onOk={(ids) => {
           const cur = members ?? group.members;
-          const added = ids.filter((i) => !cur.some((m) => m.memberId === i));
+          const added = ids
+            .filter((i) => !cur.some((m) => m.memberId === i))
+            .map((mid) => ({ mid, auditor: auditors.find((a) => a.id === mid) }))
+            .filter((x): x is { mid: string; auditor: Auditor } => !!x.auditor);
           setMembers([
             ...cur,
-            ...added.map((mid) => ({
+            ...added.map(({ mid, auditor }) => ({
               memberId: mid,
-              auditor: auditors.find((a) => a.id === mid)!,
+              auditor,
               role: '审计员' as GroupRole,
               duty: '',
               responsibleItems: [],

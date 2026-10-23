@@ -72,7 +72,18 @@ export function RoleTag({ role }: { role: GroupRole }) {
 
 /* ------------------------------ 人员 ------------------------------ */
 
-export function AuditorAvatar({ auditor, size = 28 }: { auditor: Auditor; size?: number }) {
+/** 名册中可能查不到对应人员（如已删除），此时渲染占位头像而不是崩页面 */
+export function AuditorAvatar({ auditor, size = 28 }: { auditor?: Auditor; size?: number }) {
+  if (!auditor) {
+    return (
+      <Avatar
+        size={size}
+        style={{ backgroundColor: '#c3ccd6', fontSize: size > 26 ? 13 : 11, flex: 'none' }}
+      >
+        ?
+      </Avatar>
+    );
+  }
   return (
     <Avatar
       size={size}

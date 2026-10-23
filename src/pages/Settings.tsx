@@ -32,12 +32,13 @@ import {
   UndoOutlined,
   UserOutlined,
 } from '@ant-design/icons';
-import { auditors } from '@/mock/data';
 import { BusyTag } from '@/components/BizTag';
 import DictConfigPanel from '@/components/DictConfigPanel';
+import AuditorConfigPanel from '@/components/AuditorConfigPanel';
 import { useAuth } from '@/store/authStore';
 import { useUserData } from '@/store/userData';
 import { useDict } from '@/store/dictStore';
+import { useAuditors } from '@/store/auditorStore';
 import { backend } from '@/services/backend';
 import { getPolicy } from '@/utils/permissions';
 
@@ -46,6 +47,7 @@ export default function Settings() {
   const { currentUser, logout, storageMode, deletedUsers, restoreUser } = useAuth();
   const { projects, groups, documents, todos, resetDataset } = useUserData();
   const { items: dictItems, labels } = useDict();
+  const { auditors } = useAuditors();
   const departments = labels('department');
   const roles = labels('role');
   const [dbPath, setDbPath] = useState('');
@@ -350,6 +352,16 @@ export default function Settings() {
                 </Space>
               ),
               children: <DictConfigPanel />,
+            },
+            {
+              key: 'auditors',
+              label: (
+                <Space size={4}>
+                  <TeamOutlined />
+                  审计人员名册
+                </Space>
+              ),
+              children: <AuditorConfigPanel />,
             },
             {
               key: 'template',

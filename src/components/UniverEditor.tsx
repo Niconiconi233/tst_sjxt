@@ -3,7 +3,24 @@
  *
  * - 由 docType 决定创建 UNIVER_DOC（文档）或 UNIVER_SHEET（表格）实例；
  * - 内容以 Univer 快照 JSON 形式通过 Rust 命令落库；
- * - 组件卸载时释放实例并清空容器，避免 React 严格模式下重复挂载残留。
+ * - 导入正文等场景通过 resetKey 触发「整实例重建」。
+ *
+ * ─ Univer 实例的销毁铁律（踩过坑，勿改）──────────────────────────────
+ * 1. 不能在 React 提交/卸载阶段同步 dispose()。UI 插件在容器 div 里
+ *    挂了自己的 React root，同步 dispose 会与外层 React 抢 DOM，
+ *    抛 removeChild NotFoundError，整页白屏。
+ * 2. 新旧实例共存期间**绝对不能 dispose 旧实例**。dispose() 会释放
+ *    渲染引擎的全局单例，只要旧实例的 dispose 发生在新实例「的一生中」
+ *    任何时点，新实例就会变成「数据在模型里、画布永远空白且无法编辑」
+ *    的空壳 —— Chrome 里「等新实例渲染完再销毁」侥幸可用，但 Tauri 的
+ *    WKWebView 时序不同，同样复现（实测 2026-10-22）。
+ *
+ * 因此重建流程是：旧实例立刻摘出 DOM，放进「僵尸」列表**不销毁**；
+ * 只在组件卸载（离开编辑页）时，才在宏任务里统一 dispose 全部实例。
+ * 这个「先销毁、后建新」的顺序是历史上多文档切换一直正常的路径。
+ * resetKey 必须用 prop 传入，不要给本组件加 React key（key 变化走
+ * React 卸载路径，同样会崩）。
+ * ─────────────────────────────────────────────────────────────────────
  */
 import {
   forwardRef,
@@ -81,17 +98,41 @@ interface Props {
   /** 已保存的快照 JSON（空串表示新建） */
   content: string;
   title: string;
+  /** 变化时重建 Univer 实例（导入正文后使用），见文件头说明 */
+  resetKey?: number;
   /** 用户产生编辑动作时回调（用于标记未保存） */
   onDirty?: () => void;
 }
 
+/** 一代 Univer 实例：引擎 + 专属容器 div */
+interface UniverInstance {
+  univer: Univer;
+  div: HTMLDivElement;
+  unitId: string | null;
+}
+
+/** 真正释放实例（只允许在组件卸载后的宏任务里调用） */
+function disposeInstance(inst: UniverInstance) {
+  try {
+    inst.univer.dispose();
+  } catch {
+    /* 释放异常不影响页面 */
+  }
+  inst.div.innerHTML = '';
+}
+
 const UniverEditor = forwardRef<UniverEditorHandle, Props>(function UniverEditor(
-  { docType, content, title, onDirty },
+  { docType, content, title, resetKey = 0, onDirty },
   ref,
 ) {
   const hostRef = useRef<HTMLDivElement>(null);
-  const univerRef = useRef<Univer | null>(null);
-  const unitRef = useRef<{ getSnapshot: () => unknown } | null>(null);
+  const instRef = useRef<UniverInstance | null>(null);
+  /** 已摘出 DOM 的僵尸实例（与现役实例共存期间绝不 dispose，卸载时统一回收） */
+  const pendingRef = useRef<Set<UniverInstance>>(new Set());
+  const unitRef = useRef<{
+    getSnapshot: () => unknown;
+    getUnitId?: () => string;
+  } | null>(null);
   const [error, setError] = useState('');
 
   useImperativeHandle(ref, () => ({
@@ -124,16 +165,32 @@ const UniverEditor = forwardRef<UniverEditorHandle, Props>(function UniverEditor
       }
       if (docType === 'document') snapshot = normalizeDocSnapshot(snapshot);
 
+      // 上一代实例只摘 DOM，进僵尸列表，重叠期间绝不 dispose（见文件头铁律 2）
+      const previous = instRef.current;
+      instRef.current = null;
+      unitRef.current = null;
+      if (previous) {
+        try {
+          previous.div.remove();
+        } catch {
+          /* 容器可能已被 React 移除 */
+        }
+        pendingRef.current.add(previous);
+      }
+
+      const div = document.createElement('div');
+      div.style.cssText = 'width:100%;height:100%;';
+      host.appendChild(div);
+
       const univer = new Univer({
         locale: ZH_CN as never,
         locales: { [ZH_CN]: ZH_LOCALES } as never,
       });
-      univerRef.current = univer;
 
       univer.registerPlugin(UniverRenderEnginePlugin);
       univer.registerPlugin(UniverFormulaEnginePlugin);
       univer.registerPlugin(UniverUIPlugin, {
-        container: host,
+        container: div,
         // header 承载菜单栏与工具栏，关掉会导致 Word 里既没有工具按钮也没有菜单
         header: true,
         toolbar: true,
@@ -150,9 +207,12 @@ const UniverEditor = forwardRef<UniverEditorHandle, Props>(function UniverEditor
           ? UniverInstanceType.UNIVER_DOC
           : UniverInstanceType.UNIVER_SHEET;
 
-      unitRef.current = univer.createUnit(type, snapshot as never) as unknown as {
+      const unit = univer.createUnit(type, snapshot as never) as unknown as {
         getSnapshot: () => unknown;
+        getUnitId?: () => string;
       };
+      unitRef.current = unit;
+      instRef.current = { univer, div, unitId: unit.getUnitId?.() ?? null };
     };
 
     // 等一帧，确保容器已完成布局测量
@@ -176,19 +236,29 @@ const UniverEditor = forwardRef<UniverEditorHandle, Props>(function UniverEditor
       window.cancelAnimationFrame(raf);
       host.removeEventListener('keyup', markDirty);
       host.removeEventListener('pointerup', markDirty);
-      unitRef.current = null;
-      const univer = univerRef.current;
-      univerRef.current = null;
-      try {
-        univer?.dispose();
-      } catch {
-        /* 释放异常不影响页面切换 */
-      }
-      host.innerHTML = '';
     };
-    // content 仅在文档切换时变化，故意不加入依赖以免重建实例
+    // content/resetKey 变化时重建实例（导入正文）；title/docType 变化同理
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [docType, title]);
+  }, [docType, title, resetKey]);
+
+  // 组件卸载（离开编辑页）：此刻已无共存实例需要保护，在宏任务里统一
+  // dispose 当前实例与全部僵尸实例。「先销毁、后建新」是历史上多文档
+  // 切换一直正常的路径；不能在 React 提交阶段同步执行（见文件头铁律 1）。
+  useEffect(
+    () => () => {
+      const inst = instRef.current;
+      const pending = pendingRef.current;
+      instRef.current = null;
+      unitRef.current = null;
+      if (!inst && pending.size === 0) return;
+      window.setTimeout(() => {
+        if (inst) disposeInstance(inst);
+        for (const old of pending) disposeInstance(old);
+        pending.clear();
+      }, 0);
+    },
+    [],
+  );
 
   return (
     <>

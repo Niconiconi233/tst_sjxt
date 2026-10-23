@@ -3,7 +3,8 @@ import { Alert, Button, Drawer, Input, Select, Space, Table, Tag } from 'antd';
 import type { TableProps } from 'antd';
 import { SearchOutlined } from '@ant-design/icons';
 import { AuditorCell, BusyTag } from '@/components/BizTag';
-import { auditors } from '@/mock/data';
+import { useAuditors } from '@/store/auditorStore';
+import { useDict } from '@/store/dictStore';
 import type { Auditor } from '@/types';
 
 interface Props {
@@ -23,7 +24,10 @@ export default function AuditorPicker({ open, selectedIds, excludeIds = [], onCa
   const [role, setRole] = useState<string | undefined>();
   const [draft, setDraft] = useState<string[]>(selectedIds);
 
-  const departments = useMemo(() => [...new Set(auditors.map((a) => a.department))], []);
+  // 人员名册与可选角色均取自后端，可在「系统设置」中维护
+  const { auditors, departments } = useAuditors();
+  const { labels: dictLabels } = useDict();
+  const roleOptions = dictLabels('role');
 
   const dataSource = useMemo(
     () =>
@@ -33,7 +37,7 @@ export default function AuditorPicker({ open, selectedIds, excludeIds = [], onCa
         if (role && !a.capableRoles.includes(role as any)) return false;
         return true;
       }),
-    [keyword, dept, role],
+    [auditors, keyword, dept, role],
   );
 
   const columns: TableProps<Auditor>['columns'] = [
@@ -114,10 +118,7 @@ export default function AuditorPicker({ open, selectedIds, excludeIds = [], onCa
           style={{ width: 140 }}
           value={role}
           onChange={setRole}
-          options={['审计组长', '副组长', '主审', '审计员', '复核员', '廉政监督员', '资料员', '外部专家'].map((r) => ({
-            value: r,
-            label: r,
-          }))}
+          options={roleOptions.map((r) => ({ value: r, label: r }))}
         />
       </Space>
       <Table

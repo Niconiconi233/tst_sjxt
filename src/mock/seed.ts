@@ -1,11 +1,11 @@
 import type { SystemUser } from '@/types/user';
 import {
-  auditors,
   documents as seedDocuments,
   groups as seedGroups,
   projects as seedProjects,
   todos as seedTodos,
 } from '@/mock/data';
+import { defaultAuditors } from '@/mock/auditorDefaults';
 import type {
   AuditDocument,
   AuditGroup,
@@ -94,11 +94,15 @@ export function buildSeed(user: SystemUser, withDemo: boolean): UserDataset {
     avatarColor: user.avatarColor,
   };
 
+  // 名册人员取自与数据库同源的默认名单（id 一致，A1001…）
+  const roster = defaultAuditors().map(
+    (r) => ({ ...r, gender: r.gender === '女' ? '女' : '男' }) as Auditor,
+  );
   const mates = [
     mkMember(me, user.role || '审计组长', '全面负责审计组工作，审定实施方案与报告', ['总体统筹']),
-    mkMember(auditors[3], '主审', '汇总底稿、起草审计报告', ['底稿复核', '报告起草']),
-    mkMember(auditors[9], '审计员', '负责财务收支与专项资金核查', ['财务收支', '专项资金']),
-    mkMember(auditors[8], '复核员', '负责底稿与证据复核', ['底稿复核']),
+    mkMember(roster[3], '主审', '汇总底稿、起草审计报告', ['底稿复核', '报告起草']),
+    mkMember(roster[9], '审计员', '负责财务收支与专项资金核查', ['财务收支', '专项资金']),
+    mkMember(roster[8], '复核员', '负责底稿与证据复核', ['底稿复核']),
   ];
 
   const project: AuditProject = {

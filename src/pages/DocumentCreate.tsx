@@ -30,10 +30,10 @@ import {
   SaveOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
-import { auditors } from '@/mock/data';
 import { useAuth } from '@/store/authStore';
 import { useUserData } from '@/store/userData';
 import { useDict } from '@/store/dictStore';
+import { useAuditors } from '@/store/auditorStore';
 import { allowedCategories, canDo } from '@/utils/permissions';
 import { bizColors } from '@/theme';
 import { recommendDocType } from '@/utils/docType';
@@ -53,6 +53,7 @@ export default function DocumentCreate() {
   const { currentUser } = useAuth();
   const { projects, groups, documents, addDocument } = useUserData();
   const { labels, remarkOf } = useDict();
+  const { auditors } = useAuditors();
   const [form] = Form.useForm();
 
   const [step, setStep] = useState(0);
@@ -273,7 +274,7 @@ export default function DocumentCreate() {
             layout="vertical"
             initialValues={{
               secretLevel: '内部',
-              authorId: currentUser?.id ?? auditors[0].id,
+              authorId: currentUser?.id ?? auditors[0]?.id,
               version: 'V1.0',
               pages: 3,
               projectId: initialProject,

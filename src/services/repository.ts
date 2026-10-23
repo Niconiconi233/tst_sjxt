@@ -6,6 +6,7 @@
  */
 import { buildSeed, type UserDataset } from '@/mock/seed';
 import { defaultDictItems } from '@/mock/dictDefaults';
+import { defaultAuditors } from '@/mock/auditorDefaults';
 import { backend, isTauriRuntime } from '@/services/backend';
 import type {
   AuditDocument,
@@ -15,6 +16,7 @@ import type {
 } from '@/types';
 import type { SystemUser } from '@/types/user';
 import type { DictItem } from '@/types/dict';
+import type { AuditorRecord } from '@/types/auditor';
 
 const USERS_KEY = 'agms.users';
 const LAST_USER_KEY = 'agms.lastUserId';
@@ -23,6 +25,8 @@ const dataKey = (userId: string) => `agms.data.${userId}`;
 const MARKED_DELETED_KEY = 'agms.deletedUsers';
 /** 浏览器模式下的业务字典缓存 */
 const DICT_KEY = 'agms.dict';
+/** 浏览器模式下的人员名册缓存 */
+const AUDITORS_KEY = 'agms.auditors';
 
 export type StorageMode = 'sqlite' | 'browser';
 
@@ -65,6 +69,12 @@ export interface DataRepository {
   saveDictItem(item: DictItem): Promise<DictItem>;
   deleteDictItem(id: string): Promise<void>;
   restoreDictDefaults(): Promise<DictItem[]>;
+
+  /* 审计人员名册（全库共享） */
+  loadAuditors(): Promise<AuditorRecord[]>;
+  saveAuditor(item: AuditorRecord): Promise<AuditorRecord>;
+  deleteAuditor(id: string): Promise<void>;
+  restoreDefaultAuditors(): Promise<AuditorRecord[]>;
 }
 
 /** 失败不阻断界面操作，仅记录日志（后续可替换为全局提示） */
@@ -194,6 +204,22 @@ const sqliteRepo: DataRepository = {
 
   async restoreDictDefaults() {
     return (await safe(() => backend.restoreDictDefaults(), 'restoreDictDefaults')) ?? [];
+  },
+
+  async loadAuditors() {
+    return (await safe(() => backend.listAuditors(), 'listAuditors')) ?? [];
+  },
+
+  async saveAuditor(item) {
+    return (await safe(() => backend.saveAuditor(item), 'saveAuditor')) ?? item;
+  },
+
+  async deleteAuditor(id) {
+    await safe(() => backend.deleteAuditor(id), 'deleteAuditor');
+  },
+
+  async restoreDefaultAuditors() {
+    return (await safe(() => backend.restoreDefaultAuditors(), 'restoreDefaultAuditors')) ?? [];
   },
 };
 
@@ -351,6 +377,43 @@ const browserRepo: DataRepository = {
       }
     }
     writeJSON(DICT_KEY, merged);
+    return merged;
+  },
+
+  async loadAuditors() {
+    const cached = readJSON<AuditorRecord[] | null>(AUDITORS_KEY, null);
+    if (cached && cached.length) return cached;
+    const seeded = defaultAuditors();
+    writeJSON(AUDITORS_KEY, seeded);
+    return seeded;
+  },
+
+  async saveAuditor(item) {
+    const list = readJSON<AuditorRecord[]>(AUDITORS_KEY, defaultAuditors());
+    writeJSON(
+      AUDITORS_KEY,
+      list.some((x) => x.id === item.id)
+        ? list.map((x) => (x.id === item.id ? item : x))
+        : [...list, { ...item, id: item.id || `au_${Date.now()}` }],
+    );
+    return item;
+  },
+
+  async deleteAuditor(id) {
+    writeJSON(
+      AUDITORS_KEY,
+      readJSON<AuditorRecord[]>(AUDITORS_KEY, []).filter((x) => x.id !== id),
+    );
+  },
+
+  async restoreDefaultAuditors() {
+    // 补回缺失的预置人员（按 id），保留人工新增的条目
+    const list = readJSON<AuditorRecord[]>(AUDITORS_KEY, []);
+    const merged = [...list];
+    for (const a of defaultAuditors()) {
+      if (!merged.some((x) => x.id === a.id)) merged.push(a);
+    }
+    writeJSON(AUDITORS_KEY, merged);
     return merged;
   },
 };

@@ -3,6 +3,7 @@
 //! 数据持久化由本地 SQLite 承担（src/db.rs + src/commands.rs），
 //! 所有业务表按 owner_id（登录账户）分片，实现账户级隔离。
 
+mod auditors;
 mod commands;
 mod db;
 mod dict;
@@ -22,6 +23,8 @@ use tauri::Manager;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // 导出 Word/Excel 时弹出系统「另存为」对话框
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let dir = app
                 .path()
@@ -64,6 +67,8 @@ pub fn run() {
             commands::delete_document,
             commands::get_document_content,
             commands::save_document_content,
+            // 导出文件落盘
+            commands::write_export_file,
             // 待办
             commands::create_todo,
             commands::delete_todo,
@@ -72,6 +77,11 @@ pub fn run() {
             commands::save_dict_item,
             commands::delete_dict_item,
             commands::restore_dict_defaults,
+            // 审计人员名册
+            commands::list_auditors,
+            commands::save_auditor,
+            commands::delete_auditor,
+            commands::restore_default_auditors,
         ])
         .run(tauri::generate_context!())
         .expect("启动 Tauri 应用失败");

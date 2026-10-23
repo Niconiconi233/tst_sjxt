@@ -9,6 +9,7 @@ import { auditTheme } from '@/theme';
 import { AuthProvider, useAuth } from '@/store/authStore';
 import { UserDataProvider, useUserData } from '@/store/userData';
 import { DictProvider } from '@/store/dictStore';
+import { AuditorProvider } from '@/store/auditorStore';
 import Login from '@/pages/Login';
 import MainLayout from '@/layouts/MainLayout';
 import Workbench from '@/pages/Workbench';
@@ -92,9 +93,11 @@ export default function App() {
         <AuthProvider>
           {/* 字典需在登录页之前就绪：新建账户的部门/职务/角色全部来自这里 */}
           <DictProvider>
-            <HashRouter>
-              <AppShell />
-            </HashRouter>
+            <AuditorProvider>
+              <HashRouter>
+                <AppShell />
+              </HashRouter>
+            </AuditorProvider>
           </DictProvider>
         </AuthProvider>
       </AntdApp>

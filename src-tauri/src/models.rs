@@ -61,6 +61,100 @@ impl DictItem {
     }
 }
 
+/// 审计人员名册（全库共享，对应前端 Auditor + 维护字段）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuditorRecord {
+    pub id: String,
+    pub name: String,
+    /// 工号 / 执法证号
+    pub code: String,
+    pub gender: String,
+    pub department: String,
+    pub title: String,
+    pub qualification: String,
+    pub phone: String,
+    pub email: String,
+    /// 可担任角色：存储态为逗号分隔字符串；输出给前端时展开为数组
+    #[serde(skip)]
+    pub capable_roles_raw: String,
+    pub capable_roles: Vec<String>,
+    pub busy_projects: i64,
+    pub avatar_color: String,
+    pub sort_order: i64,
+    pub enabled: bool,
+    pub builtin: bool,
+}
+
+impl AuditorRecord {
+    /// 从数据库行读取（capable_roles 为逗号分隔）
+    pub fn from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Self> {
+        let raw: String = r.get(10)?;
+        Ok(AuditorRecord {
+            id: r.get(0)?,
+            name: r.get(1)?,
+            code: r.get(2)?,
+            gender: r.get(3)?,
+            department: r.get(4)?,
+            title: r.get(5)?,
+            qualification: r.get(6)?,
+            phone: r.get(7)?,
+            email: r.get(8)?,
+            capable_roles: split_roles(&raw),
+            capable_roles_raw: raw,
+            busy_projects: r.get(9)?,
+            avatar_color: r.get(11)?,
+            sort_order: r.get(12)?,
+            enabled: r.get::<_, i32>(13).unwrap_or(1) != 0,
+            builtin: r.get::<_, i32>(14).unwrap_or(0) != 0,
+        })
+    }
+
+    /// 从前端提交的 JSON 读取
+    pub fn from_json(v: &Json) -> Self {
+        let roles: Vec<String> = v
+            .get("capableRoles")
+            .and_then(|x| x.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        AuditorRecord {
+            id: s(v, "id"),
+            name: s(v, "name"),
+            code: s(v, "code"),
+            gender: s(v, "gender"),
+            department: s(v, "department"),
+            title: s(v, "title"),
+            qualification: s(v, "qualification"),
+            phone: s(v, "phone"),
+            email: s(v, "email"),
+            capable_roles_raw: roles.join(","),
+            capable_roles: roles,
+            busy_projects: i(v, "busyProjects"),
+            avatar_color: s(v, "avatarColor"),
+            sort_order: i(v, "sortOrder"),
+            enabled: if v.get("enabled").is_none() {
+                true
+            } else {
+                b(v, "enabled")
+            },
+            builtin: b(v, "builtin"),
+        }
+    }
+}
+
+/// "审计组长,主审" → ["审计组长", "主审"]
+fn split_roles(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(|x| x.trim())
+        .filter(|x| !x.is_empty())
+        .map(|x| x.to_string())
+        .collect()
+}
+
 /// 单个账户的完整工作台数据（与前端 UserDataset 对应）
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WorkspaceData {

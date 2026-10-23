@@ -103,6 +103,28 @@ CREATE TABLE IF NOT EXISTS dict_items (
     builtin    INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_dict_category ON dict_items(category, parent);
+
+-- 审计人员名册：选人、组长指派、文件编制人 / 复核人的数据来源。
+-- 全库共享（不带 owner_id），由「系统设置 → 审计人员名册」维护。
+-- capable_roles 以逗号分隔存储多个可担任角色。
+CREATE TABLE IF NOT EXISTS auditors (
+    id            TEXT PRIMARY KEY,
+    name          TEXT NOT NULL,
+    code          TEXT NOT NULL DEFAULT '',
+    gender        TEXT NOT NULL DEFAULT '男',
+    department    TEXT NOT NULL DEFAULT '',
+    title         TEXT NOT NULL DEFAULT '',
+    qualification TEXT NOT NULL DEFAULT '',
+    phone         TEXT NOT NULL DEFAULT '',
+    email         TEXT NOT NULL DEFAULT '',
+    capable_roles TEXT NOT NULL DEFAULT '',
+    busy_projects INTEGER NOT NULL DEFAULT 0,
+    avatar_color  TEXT NOT NULL DEFAULT '#1a5fb4',
+    sort_order    INTEGER NOT NULL DEFAULT 0,
+    enabled       INTEGER NOT NULL DEFAULT 1,
+    builtin       INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_auditors_dept ON auditors(department);
 "#;
 
 /// 判断表中是否已存在某列（用于旧库平滑升级）
@@ -144,8 +166,9 @@ impl AppState {
         )?;
         conn.execute_batch(MIGRATION_SQL)?;
         ensure_deleted_at_columns(&conn)?;
-        // 首次建库时播种业务字典默认值（已存在的条目不会被覆盖）
+        // 首次建库时播种业务字典与人员名册默认值（已存在的条目不会被覆盖）
         crate::dict::seed_defaults(&conn)?;
+        crate::auditors::seed_defaults(&conn)?;
         Ok(Self {
             db: Mutex::new(conn),
             db_path: path,
