@@ -77,6 +77,13 @@ pub fn run() {
             commands::save_dict_item,
             commands::delete_dict_item,
             commands::restore_dict_defaults,
+            // 文书模板附件（挂在 doc_template 条目上）
+            commands::upload_dict_file,
+            commands::read_dict_file,
+            commands::delete_dict_file,
+            // 应用级键值配置（机关名称、机构代码等）
+            commands::load_app_settings,
+            commands::save_app_setting,
             // 审计人员名册
             commands::list_auditors,
             commands::save_auditor,

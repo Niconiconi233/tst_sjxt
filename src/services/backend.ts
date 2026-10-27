@@ -38,6 +38,12 @@ export interface AppInfo {
   dbPath: string;
 }
 
+/** 从数据库读出的模板附件（base64 内容 + 原始文件名） */
+export interface DictFilePayload {
+  fileName: string;
+  dataBase64: string;
+}
+
 export const backend = {
   available: isTauriRuntime(),
 
@@ -51,6 +57,16 @@ export const backend = {
   saveDictItem: (item: DictItem) => call<DictItem>('save_dict_item', { item }),
   deleteDictItem: (id: string) => call<void>('delete_dict_item', { id }),
   restoreDictDefaults: () => call<DictItem[]>('restore_dict_defaults'),
+
+  /* 文书模板附件（挂在 doc_template 条目上） */
+  uploadDictFile: (id: string, fileName: string, dataBase64: string, updatedAt: string) =>
+    call<DictItem>('upload_dict_file', { id, fileName, dataBase64, updatedAt }),
+  readDictFile: (id: string) => call<DictFilePayload>('read_dict_file', { id }),
+  deleteDictFile: (id: string) => call<DictItem>('delete_dict_file', { id }),
+
+  /* 应用级键值配置 */
+  loadAppSettings: () => call<Record<string, string>>('load_app_settings'),
+  saveAppSetting: (key: string, value: string) => call<void>('save_app_setting', { key, value }),
 
   /* 审计人员名册（全库共享） */
   listAuditors: () => call<AuditorRecord[]>('list_auditors'),

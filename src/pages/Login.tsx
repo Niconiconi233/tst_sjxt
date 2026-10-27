@@ -45,15 +45,24 @@ export default function Login() {
     withDemo: true,
   });
 
-  // 字典就绪后补上默认选中项；已手工改过的保持不动
+  // 字典就绪后补上默认选中项；已手工改过的保持不动。
+  // 注意 departments / titles / roles 每次渲染都是新数组，不能直接当依赖判断「变了」，
+  // 这里让 updater 在值没变化时原样返回，靠 React 的 bail-out 掐断重复渲染 ——
+  // 否则 setForm 每次都产出新对象，会触发 Maximum update depth exceeded。
   useEffect(() => {
     if (!departments.length && !titles.length && !roles.length) return;
-    setForm((f) => ({
-      ...f,
-      department: f.department || departments[0] || '',
-      title: f.title || titles[0] || '',
-      role: (f.role && roles.includes(f.role) ? f.role : (roles[0] as GroupRole)) || f.role,
-    }));
+    setForm((f) => {
+      const next = {
+        ...f,
+        department: f.department || departments[0] || '',
+        title: f.title || titles[0] || '',
+        role: (f.role && roles.includes(f.role) ? f.role : (roles[0] as GroupRole)) || f.role,
+      };
+      if (next.department === f.department && next.title === f.title && next.role === f.role) {
+        return f;
+      }
+      return next;
+    });
   }, [departments, titles, roles]);
 
   useEffect(() => {

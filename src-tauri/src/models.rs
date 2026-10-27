@@ -40,6 +40,14 @@ pub struct DictItem {
     pub enabled: bool,
     /// 是否为系统预置项（预置项可停用但界面上标注来源）
     pub builtin: bool,
+    /// 附件原始文件名（文书模板用；未上传为空串）
+    pub file_name: String,
+    /// 附件扩展名（小写，不含点）
+    pub file_ext: String,
+    /// 附件字节数
+    pub file_size: i64,
+    /// 附件上传 / 替换时间
+    pub file_updated_at: String,
 }
 
 impl DictItem {
@@ -57,7 +65,29 @@ impl DictItem {
                 b(v, "enabled")
             },
             builtin: b(v, "builtin"),
+            file_name: s(v, "fileName"),
+            file_ext: s(v, "fileExt"),
+            file_size: i(v, "fileSize"),
+            file_updated_at: s(v, "fileUpdatedAt"),
         }
+    }
+
+    /// 从数据库行读取（列顺序见 commands.rs 中的 DICT_COLUMNS）
+    pub fn from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Self> {
+        Ok(DictItem {
+            id: r.get(0)?,
+            category: r.get(1)?,
+            parent: r.get(2)?,
+            label: r.get(3)?,
+            remark: r.get(4)?,
+            sort_order: r.get(5)?,
+            enabled: r.get::<_, i32>(6).unwrap_or(1) != 0,
+            builtin: r.get::<_, i32>(7).unwrap_or(0) != 0,
+            file_name: r.get(8)?,
+            file_ext: r.get(9)?,
+            file_size: r.get(10)?,
+            file_updated_at: r.get::<_, Option<String>>(11)?.unwrap_or_default(),
+        })
     }
 }
 

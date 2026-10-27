@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   App,
   Alert,
@@ -24,6 +25,7 @@ import {
   AppstoreAddOutlined,
   CopyOutlined,
   DatabaseOutlined,
+  FileTextOutlined,
   FolderOpenOutlined,
   SafetyOutlined,
   SettingOutlined,
@@ -32,23 +34,23 @@ import {
   UndoOutlined,
   UserOutlined,
 } from '@ant-design/icons';
-import { BusyTag } from '@/components/BizTag';
 import DictConfigPanel from '@/components/DictConfigPanel';
 import AuditorConfigPanel from '@/components/AuditorConfigPanel';
+import DocTemplatePanel from '@/components/DocTemplatePanel';
+import OrgInfoCard from '@/components/OrgInfoCard';
 import { useAuth } from '@/store/authStore';
 import { useUserData } from '@/store/userData';
 import { useDict } from '@/store/dictStore';
-import { useAuditors } from '@/store/auditorStore';
 import { backend } from '@/services/backend';
 import { getPolicy } from '@/utils/permissions';
 
 export default function Settings() {
   const { message } = App.useApp();
+  const [params, setParams] = useSearchParams();
+  const activeTab = params.get('tab') ?? 'account';
   const { currentUser, logout, storageMode, deletedUsers, restoreUser } = useAuth();
   const { projects, groups, documents, todos, resetDataset } = useUserData();
-  const { items: dictItems, labels } = useDict();
-  const { auditors } = useAuditors();
-  const departments = labels('department');
+  const { labels } = useDict();
   const roles = labels('role');
   const [dbPath, setDbPath] = useState('');
   const [backendInfo, setBackendInfo] = useState('');
@@ -95,9 +97,16 @@ export default function Settings() {
           type="info"
           showIcon
           style={{ marginBottom: 16, fontSize: 12 }}
-          message="字典类配置（部门、职务、角色、审计类型、文件类别与模板、审计事项等）已持久化到本机数据库，在「字典与模板配置」页维护后立即生效；机构信息、备份策略等仍为展示内容，将在业务逻辑阶段实现。"
+          message="字典选项、机构信息、审计人员名册与文书模板均已持久化到本机数据库，改动即时生效；备份策略、运行模式等仍为展示内容，将在业务逻辑阶段实现。"
         />
         <Tabs
+          activeKey={activeTab}
+          onChange={(k) => {
+            // 页签写进地址栏：从组建审计组页面可以直接跳到「文书模板库」
+            const next = new URLSearchParams(params);
+            next.set('tab', k);
+            setParams(next, { replace: true });
+          }}
           items={[
             {
               key: 'account',
@@ -306,40 +315,14 @@ export default function Settings() {
               ),
               children: (
                 <div>
-                  <Descriptions bordered size="small" column={2} styles={{ label: { width: 140 } }}>
-                    <Descriptions.Item label="审计机关名称">XX 市审计局</Descriptions.Item>
-                    <Descriptions.Item label="机构代码">11330000000000000X</Descriptions.Item>
-                    <Descriptions.Item label="内设机构数">12 个</Descriptions.Item>
-                    <Descriptions.Item label="在编人员数">{auditors.length} 人</Descriptions.Item>
-                    <Descriptions.Item label="业务处室">
-                      {departments.length
-                        ? departments.join('、')
-                        : '尚未配置，请在「字典与模板配置」中维护'}
-                    </Descriptions.Item>
-                  </Descriptions>
-                  <Divider style={{ margin: '16px 0 12px' }} />
-                  <Typography.Title level={5} style={{ fontSize: 13 }}>
-                    人员库预览
+                  {/* 机构信息与人员名册同属一块：原先「机构与人员」里那张只读人员
+                      预览表，和「审计人员名册」维护的是同一批人，重复且只能看不能改。 */}
+                  <OrgInfoCard />
+                  <Divider style={{ margin: '18px 0 12px' }} />
+                  <Typography.Title level={5} style={{ fontSize: 13, marginTop: 0 }}>
+                    人员名册
                   </Typography.Title>
-                  <Table
-                    size="small"
-                    rowKey="id"
-                    pagination={{ pageSize: 6, size: 'small' }}
-                    dataSource={auditors}
-                    columns={[
-                      { title: '姓名', dataIndex: 'name', width: 100 },
-                      { title: '工号', dataIndex: 'code', width: 100 },
-                      { title: '部门', dataIndex: 'department', width: 200 },
-                      { title: '职务', dataIndex: 'title', width: 120 },
-                      {
-                        title: '资格',
-                        dataIndex: 'qualification',
-                        width: 140,
-                        render: (v?: string) => (v ? <Tag style={{ fontSize: 11 }}>{v}</Tag> : '—'),
-                      },
-                      { title: '负荷', dataIndex: 'busyProjects', width: 90, render: (v: number) => <BusyTag count={v} /> },
-                    ]}
-                  />
+                  <AuditorConfigPanel />
                 </div>
               ),
             },
@@ -348,41 +331,20 @@ export default function Settings() {
               label: (
                 <Space size={4}>
                   <AppstoreAddOutlined />
-                  字典与模板配置
+                  字典配置
                 </Space>
               ),
               children: <DictConfigPanel />,
             },
             {
-              key: 'auditors',
+              key: 'template',
               label: (
                 <Space size={4}>
-                  <TeamOutlined />
-                  审计人员名册
+                  <FileTextOutlined />
+                  文书模板库
                 </Space>
               ),
-              children: <AuditorConfigPanel />,
-            },
-            {
-              key: 'template',
-              label: '文书模板库',
-              children: (
-                <Descriptions bordered size="small" column={2} styles={{ label: { width: 140 } }}>
-                  <Descriptions.Item label="模板总数">
-                    {dictItems.filter((x) => x.category === 'doc_template' && x.enabled).length} 套
-                  </Descriptions.Item>
-                  <Descriptions.Item label="文书类别">
-                    {dictItems.filter((x) => x.category === 'doc_category' && x.enabled).length} 类
-                  </Descriptions.Item>
-                  <Descriptions.Item label="模板版本">2026.01 版</Descriptions.Item>
-                  <Descriptions.Item label="维护入口">
-                    「字典与模板配置」页可增删改模板与类别
-                  </Descriptions.Item>
-                  <Descriptions.Item label="支持格式" span={2}>
-                    DOCX / PDF / 内置富文本
-                  </Descriptions.Item>
-                </Descriptions>
-              ),
+              children: <DocTemplatePanel />,
             },
             {
               key: 'auth',

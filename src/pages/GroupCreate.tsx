@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Alert,
@@ -26,8 +26,10 @@ import type { TableProps } from 'antd';
 import {
   CheckCircleOutlined,
   DeleteOutlined,
+  FileTextOutlined,
   LeftOutlined,
   LockOutlined,
+  QuestionCircleOutlined,
   SaveOutlined,
   TeamOutlined,
   UserAddOutlined,
@@ -35,11 +37,16 @@ import {
 import dayjs from 'dayjs';
 import { AuditorCell, BusyTag, RoleTag } from '@/components/BizTag';
 import AuditorPicker from '@/components/AuditorPicker';
+import DocVarHelpModal from '@/components/DocVarHelpModal';
+import { useAuth } from '@/store/authStore';
 import { useUserData } from '@/store/userData';
 import { useDict } from '@/store/dictStore';
 import { useAuditors } from '@/store/auditorStore';
+import { repo } from '@/services/repository';
+import { buildAuditDocVars, varDefOf } from '@/utils/auditDocVars';
+import { safeFileName } from '@/utils/exportFile';
 import { usePermission } from '@/utils/permissions';
-import type { AuditGroup, Auditor, GroupMember, GroupRole } from '@/types';
+import type { AuditDocument, AuditGroup, Auditor, GroupMember, GroupRole } from '@/types';
 
 const STEPS = [
   { title: '选择项目', desc: '关联审计项目' },
@@ -54,13 +61,17 @@ const STEPS = [
  */
 const CORE_ROLE_NAMES = ['审计组长', '副组长', '主审', '廉政监督员'];
 
+/** 通知书设置区的小字段标题（与项目内其它表单的 label 字号保持一致） */
+const FIELD_LABEL = { fontSize: 12, color: '#5a6675', marginBottom: 4 };
+
 export default function GroupCreate() {
   const navigate = useNavigate();
   const { message, modal } = App.useApp();
   const [params] = useSearchParams();
-  const { projects, groups, addGroup } = useUserData();
-  const { labels } = useDict();
+  const { projects, groups, documents, addGroup, addDocument, addDocumentWithContent } = useUserData();
+  const { labels, allOf, readFile } = useDict();
   const { auditors } = useAuditors();
+  const { currentUser } = useAuth();
   const { can } = usePermission();
   const [form] = Form.useForm();
 
@@ -81,12 +92,136 @@ export default function GroupCreate() {
   );
   const [pledges, setPledges] = useState<string[]>(['廉政承诺书', '审计"八不准"告知书']);
 
+  /* ---------------- 审计通知书生成 ---------------- */
+
+  /** 勾选「生成《审计通知书》」后才展开下面这些配置 */
+  const wantNotice = pledges.includes('审计通知书');
+  const [noticeTplId, setNoticeTplId] = useState<string>();
+  const [noticeTitle, setNoticeTitle] = useState('');
+  const [noticeNo, setNoticeNo] = useState('');
+  const [noticeDate, setNoticeDate] = useState(dayjs());
+  /** 模板里检测到的占位符 */
+  const [noticeVars, setNoticeVars] = useState<string[]>([]);
+  const [noticeScan, setNoticeScan] = useState<'idle' | 'loading' | 'done' | 'error'>('idle');
+  const [noticeError, setNoticeError] = useState('');
+  /** 系统取不到值、由使用者手填的字段 */
+  const [extraVars, setExtraVars] = useState<Record<string, string>>({});
+  const [org, setOrg] = useState<{ name?: string; code?: string }>({});
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [generating, setGenerating] = useState(false);
+
   const project = useMemo(() => projects.find((p) => p.id === projectId), [projectId]);
   const itemOptions = useMemo(
     () =>
       project ? labels('audit_item', project.auditType).map((i) => ({ label: i, value: i })) : [],
     [project, labels],
   );
+
+  /* ---------------- 通知书：模板、标题、占位符取值 ---------------- */
+
+  /** 「审计通知类」下的启用模板；只有 .docx 才能套打，其余在选项里置灰 */
+  const noticeAllTemplates = useMemo(
+    () => allOf('doc_template', '审计通知类').filter((t) => t.enabled),
+    [allOf],
+  );
+
+  const defaultNoticeTitle = useMemo(() => {
+    if (!project) return '审计通知书';
+    const year = project.periodStart ? dayjs(project.periodStart).year() : project.year;
+    return `关于对${project.auditedUnit}${year}年度${project.auditType}的通知`;
+  }, [project]);
+
+  const defaultNoticeNo = useMemo(() => {
+    const year = dayjs().year();
+    const seq = documents.filter((d) => d.category === '审计通知类').length + 1;
+    return `审通〔${year}〕${String(seq).padStart(3, '0')}号`;
+  }, [documents]);
+
+  const noticeTitleValue = noticeTitle || defaultNoticeTitle;
+  const noticeNoValue = noticeNo || defaultNoticeNo;
+
+  /** 机构名称取自「系统设置 → 机构与人员」，供落款使用 */
+  useEffect(() => {
+    repo
+      .loadSettings()
+      .then((s) => setOrg({ name: s['org.name'], code: s['org.code'] }))
+      .catch(() => undefined);
+  }, []);
+
+  /** 打开本步时默认选中第一个可套打的模板 */
+  useEffect(() => {
+    if (!wantNotice) return;
+    setNoticeTplId((cur) => {
+      if (cur && noticeAllTemplates.some((t) => t.id === cur)) return cur;
+      const first = noticeAllTemplates.find((t) => /\.docx$/i.test(t.fileName ?? ''));
+      return first?.id;
+    });
+  }, [wantNotice, noticeAllTemplates]);
+
+  /** 换模板就重新解析占位符 */
+  useEffect(() => {
+    if (!wantNotice || !noticeTplId) {
+      setNoticeVars([]);
+      setNoticeScan('idle');
+      return;
+    }
+    let alive = true;
+    setNoticeScan('loading');
+    setNoticeError('');
+    void (async () => {
+      try {
+        const payload = await readFile(noticeTplId);
+        if (!payload) throw new Error('未能读取模板文件，请到文书模板库重新上传');
+        // jszip 体积不小，按需加载，不拖累建组页面首屏
+        const { scanDocxPlaceholders } = await import('@/utils/docxPlaceholder');
+        const found = await scanDocxPlaceholders(payload.blob);
+        if (!alive) return;
+        setNoticeVars(found);
+        setNoticeScan('done');
+      } catch (err) {
+        if (!alive) return;
+        setNoticeVars([]);
+        setNoticeScan('error');
+        setNoticeError(err instanceof Error ? err.message : String(err));
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [wantNotice, noticeTplId, readFile]);
+
+  const noticeVarsAll = useMemo(
+    () =>
+      buildAuditDocVars({
+        org,
+        project: project ?? null,
+        group: {
+          name: base.name,
+          members,
+          location: base.location,
+          establishDate: base.range
+            ? dayjs(base.range[0]).format('YYYY-MM-DD')
+            : dayjs().format('YYYY-MM-DD'),
+          planEndDate: base.range
+            ? dayjs(base.range[1]).format('YYYY-MM-DD')
+            : dayjs().format('YYYY-MM-DD'),
+          disciplineNote: discipline,
+        },
+        title: noticeTitleValue,
+        docNo: noticeNoValue,
+        issueDate: noticeDate.format('YYYY-MM-DD'),
+      }),
+    [org, project, base, members, discipline, noticeTitleValue, noticeNoValue, noticeDate],
+  );
+
+  /** 手填值覆盖自动取值（使用者可能想临时改某处表述） */
+  const finalVars = useMemo(
+    () => ({ ...noticeVarsAll, ...extraVars }),
+    [noticeVarsAll, extraVars],
+  );
+
+  const setExtra = (key: string, value: string) =>
+    setExtraVars((prev) => ({ ...prev, [key]: value }));
 
   const auditorOptions = useMemo(
     () =>
@@ -252,7 +387,9 @@ export default function GroupCreate() {
     },
   ];
 
-  const onSubmit = () => {
+  const onSubmit = async () => {
+    if (generating) return;
+    const now = dayjs().format('YYYY-MM-DD HH:mm');
     const group: AuditGroup = {
       id: `G${Date.now().toString(36)}`,
       name: base.name,
@@ -268,22 +405,108 @@ export default function GroupCreate() {
       disciplineNote: discipline,
       members,
     };
+
+    setGenerating(true);
     addGroup(group);
+
+    /** 生成的通知书；勾选才会产生 */
+    let noticeDoc: AuditDocument | undefined;
+    let noticeWarn = '';
+
+    try {
+      if (wantNotice) {
+        const tpl = noticeAllTemplates.find((t) => t.id === noticeTplId);
+        const usable = !!tpl && /\.docx$/i.test(tpl.fileName ?? '');
+        let snapshotJson = '';
+
+        if (usable) {
+          const payload = await readFile(tpl!.id);
+          if (!payload) throw new Error('未能读取模板文件，请到文书模板库重新上传');
+          // 解析与转换都是重活，按需加载
+          const { fillDocxTemplate, filledDocxAsFile } = await import('@/utils/docxPlaceholder');
+          const filled = await fillDocxTemplate(payload.blob, finalVars);
+          const { docxToSnapshot } = await import('@/utils/officeConvert');
+          const file = filledDocxAsFile(filled.blob, `${safeFileName(noticeTitleValue)}.docx`);
+          snapshotJson = JSON.stringify(await docxToSnapshot(file, noticeTitleValue));
+          if (filled.missing.length) {
+            noticeWarn = `有 ${filled.missing.length} 个字段未取到值，文中对应位置为空：${filled.missing.join('、')}`;
+          }
+        } else if (!tpl) {
+          noticeWarn =
+            '未选择模板，已创建空白文件条目。到「文书模板库」上传审计通知书 .docx 后可重新生成。';
+        } else {
+          noticeWarn = `模板「${tpl.label}」尚未上传 .docx 文件（当前为${
+            tpl.fileName ? '其他格式' : '空'
+          }），已创建空白文件条目。`;
+        }
+
+        noticeDoc = {
+          id: `D${Date.now().toString(36)}`,
+          code: noticeNoValue,
+          title: noticeTitleValue,
+          category: '审计通知类',
+          template: tpl?.label ?? '审计通知书',
+          docType: 'document',
+          hasContent: !!snapshotJson,
+          projectId: projectId!,
+          projectName: project?.name ?? '',
+          groupId: group.id,
+          groupName: group.name,
+          status: '草稿',
+          secretLevel: '内部',
+          authorId: leaderId ?? currentUser?.id ?? '',
+          authorName: auditors.find((a) => a.id === leaderId)?.name ?? currentUser?.name ?? '',
+          version: 'V1.0',
+          createdAt: now,
+          updatedAt: now,
+          pages: 3,
+          attachmentCount: 0,
+          refCodes: [],
+        };
+
+        // 有正文时走 addDocumentWithContent：先落文档行、再写正文，顺序不能反
+        if (snapshotJson) await addDocumentWithContent(noticeDoc, snapshotJson);
+        else addDocument(noticeDoc);
+      }
+    } catch (err) {
+      console.error(err);
+      noticeWarn = `审计通知书生成失败：${
+        err instanceof Error ? err.message : String(err)
+      }。审计组已建成，可到文件台账重新起草。`;
+    } finally {
+      setGenerating(false);
+    }
+
     message.success('审计组已组建');
     modal.success({
       title: '审计组组建完成',
+      width: 540,
       content: (
         <div style={{ fontSize: 13 }}>
           <div>审计组：{group.name}</div>
           <div>所属项目：{project?.name}</div>
           <div>组长：{group.leaderName}</div>
           <div>成员：{group.memberCount} 人</div>
+          {noticeDoc && (
+            <>
+              <Divider style={{ margin: '10px 0' }} />
+              <div>审计通知书：{noticeDoc.title}</div>
+              <div>文号：{noticeDoc.code}</div>
+              <div>
+                正文：
+                {noticeDoc.hasContent ? '已按模板填入项目与审计组信息（草稿）' : '空白文件'}
+              </div>
+              {noticeWarn && (
+                <div style={{ color: '#b7791f', marginTop: 6, fontSize: 12 }}>{noticeWarn}</div>
+              )}
+            </>
+          )}
         </div>
       ),
-      okText: '查看审计组台账',
+      okText: noticeDoc ? '打开通知书' : '查看审计组台账',
       cancelText: '返回',
       okCancel: true,
-      onOk: () => navigate('/groups'),
+      onOk: () => navigate(noticeDoc ? `/documents/${noticeDoc.id}/office` : '/groups'),
       onCancel: () => navigate('/groups'),
     });
   };
@@ -601,6 +824,207 @@ export default function GroupCreate() {
                 { label: '生成《审计通知书》', value: '审计通知书' },
               ]}
             />
+
+            {/* 勾选「审计通知书」后展开：选模板 → 解析占位符 → 核对取值 */}
+            {wantNotice && (
+              <div
+                style={{
+                  marginTop: 12,
+                  border: '1px solid #dfe4ea',
+                  borderRadius: 4,
+                  background: '#fafbfc',
+                  padding: '12px 14px',
+                }}
+              >
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    marginBottom: 10,
+                  }}
+                >
+                  <Space size={8}>
+                    <FileTextOutlined style={{ color: '#1a5fb4' }} />
+                    <span style={{ fontSize: 13, fontWeight: 600 }}>审计通知书生成设置</span>
+                    <Tag color="blue" style={{ fontSize: 10, marginInlineEnd: 0 }}>
+                      套打模板
+                    </Tag>
+                  </Space>
+                  <Button
+                    type="link"
+                    size="small"
+                    icon={<QuestionCircleOutlined />}
+                    onClick={() => setHelpOpen(true)}
+                  >
+                    占位符写法
+                  </Button>
+                </div>
+
+                {noticeAllTemplates.length === 0 ? (
+                  <Alert
+                    type="warning"
+                    showIcon
+                    style={{ fontSize: 12 }}
+                    message="还没有「审计通知类」模板"
+                    description={
+                      <span style={{ fontSize: 12 }}>
+                        请先到「系统设置 → 文书模板库」新建「审计通知书」模板并上传 .docx 文件。
+                        <Button
+                          type="link"
+                          size="small"
+                          onClick={() => navigate('/settings?tab=template')}
+                        >
+                          前往文书模板库
+                        </Button>
+                      </span>
+                    }
+                  />
+                ) : (
+                  <>
+                    <Row gutter={12} style={{ marginBottom: 8 }}>
+                      <Col span={9}>
+                        <div style={FIELD_LABEL}>使用模板</div>
+                        <Select
+                          style={{ width: '100%' }}
+                          value={noticeTplId}
+                          onChange={setNoticeTplId}
+                          placeholder="请选择审计通知书模板"
+                          options={noticeAllTemplates.map((t) => ({
+                            value: t.id,
+                            label: `${t.label}${t.fileName ? '' : '（未上传文件）'}`,
+                            disabled: !/\.docx$/i.test(t.fileName ?? ''),
+                          }))}
+                        />
+                      </Col>
+                      <Col span={9}>
+                        <div style={FIELD_LABEL}>文件标题</div>
+                        <Input
+                          value={noticeTitleValue}
+                          onChange={(e) => setNoticeTitle(e.target.value)}
+                          allowClear
+                        />
+                      </Col>
+                      <Col span={6}>
+                        <div style={FIELD_LABEL}>发文日期</div>
+                        <DatePicker
+                          style={{ width: '100%' }}
+                          value={noticeDate}
+                          allowClear={false}
+                          onChange={(d) => d && setNoticeDate(d)}
+                        />
+                      </Col>
+                    </Row>
+
+                    <Row gutter={12} style={{ marginBottom: 4 }}>
+                      <Col span={9}>
+                        <div style={FIELD_LABEL}>文号</div>
+                        <Input
+                          value={noticeNoValue}
+                          onChange={(e) => setNoticeNo(e.target.value)}
+                          allowClear
+                        />
+                      </Col>
+                      <Col span={15}>
+                        <div style={FIELD_LABEL}>模板占位符</div>
+                        {noticeScan === 'loading' ? (
+                          <span style={{ fontSize: 12, color: '#8a94a6' }}>正在解析模板…</span>
+                        ) : noticeScan === 'error' ? (
+                          <span style={{ fontSize: 12, color: '#b42318' }}>{noticeError}</span>
+                        ) : noticeScan === 'done' ? (
+                          <span style={{ fontSize: 12 }}>
+                            检测到 <b>{noticeVars.length}</b> 个占位符
+                          </span>
+                        ) : (
+                          <span style={{ fontSize: 12, color: '#8a94a6' }}>请先选择模板</span>
+                        )}
+                      </Col>
+                    </Row>
+
+                    {noticeScan === 'done' && noticeVars.length === 0 && (
+                      <Alert
+                        type="warning"
+                        showIcon
+                        style={{ fontSize: 12, marginTop: 8 }}
+                        message="模板里没有占位符，生成的通知书就是模板原文"
+                        description={
+                          <span style={{ fontSize: 12 }}>
+                            在 Word 模板中把需要填写的位置写成 $&#123;被审计单位&#125; 这类占位符即可自动填充。点右上角「占位符写法」查看全部可用字段。
+                          </span>
+                        }
+                      />
+                    )}
+
+                    {noticeScan === 'done' && noticeVars.length > 0 && (
+                      <>
+                        <div style={{ fontSize: 12, color: '#5a6675', margin: '10px 0 4px' }}>
+                          将填充 {noticeVars.length} 个字段；系统取不到值的可直接在此填写，留空则文中该处为空
+                        </div>
+                        <div
+                          style={{
+                            maxHeight: 190,
+                            overflow: 'auto',
+                            background: '#fff',
+                            border: '1px solid #eef1f5',
+                            borderRadius: 4,
+                            padding: '6px 10px',
+                          }}
+                        >
+                          {noticeVars.map((key) => {
+                            const auto = noticeVarsAll[key] ?? '';
+                            const known = !!varDefOf(key);
+                            return (
+                              <div
+                                key={key}
+                                style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '3px 0' }}
+                              >
+                                <Tag
+                                  color={known ? 'blue' : 'orange'}
+                                  title={known ? undefined : '模板中的自定义字段'}
+                                  style={{
+                                    width: 108,
+                                    textAlign: 'center',
+                                    fontSize: 11,
+                                    marginInlineEnd: 0,
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                  }}
+                                >
+                                  {key}
+                                </Tag>
+                                {auto ? (
+                                  <span
+                                    title={auto}
+                                    style={{
+                                      fontSize: 12,
+                                      color: '#1f2933',
+                                      flex: 1,
+                                      overflow: 'hidden',
+                                      textOverflow: 'ellipsis',
+                                      whiteSpace: 'nowrap',
+                                    }}
+                                  >
+                                    {auto}
+                                  </span>
+                                ) : (
+                                  <Input
+                                    size="small"
+                                    value={extraVars[key] ?? ''}
+                                    placeholder={known ? '系统无取值，请填写' : '模板中的自定义字段，请填写'}
+                                    onChange={(e) => setExtra(key, e.target.value)}
+                                    style={{ flex: 1, maxWidth: 320 }}
+                                  />
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -618,8 +1042,13 @@ export default function GroupCreate() {
               下一步
             </Button>
           ) : (
-            <Button type="primary" icon={<CheckCircleOutlined />} onClick={onSubmit}>
-              确认组建
+            <Button
+              type="primary"
+              icon={<CheckCircleOutlined />}
+              loading={generating}
+              onClick={() => void onSubmit()}
+            >
+              {generating ? '正在生成文书…' : '确认组建'}
             </Button>
           )}
         </Space>
@@ -650,6 +1079,13 @@ export default function GroupCreate() {
           setPickerOpen(false);
           if (added.length) message.success(`已添加 ${added.length} 名成员`);
         }}
+      />
+
+      <DocVarHelpModal
+        open={helpOpen}
+        onClose={() => setHelpOpen(false)}
+        found={noticeScan === 'done' ? noticeVars : undefined}
+        templateName={noticeAllTemplates.find((t) => t.id === noticeTplId)?.label}
       />
     </div>
   );

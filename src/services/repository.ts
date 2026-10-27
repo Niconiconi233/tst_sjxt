@@ -8,6 +8,7 @@ import { buildSeed, type UserDataset } from '@/mock/seed';
 import { defaultDictItems } from '@/mock/dictDefaults';
 import { defaultAuditors } from '@/mock/auditorDefaults';
 import { backend, isTauriRuntime } from '@/services/backend';
+import { base64ToBlob, blobToBase64, mimeOfExt } from '@/utils/exportFile';
 import type {
   AuditDocument,
   AuditGroup,
@@ -27,6 +28,10 @@ const MARKED_DELETED_KEY = 'agms.deletedUsers';
 const DICT_KEY = 'agms.dict';
 /** 浏览器模式下的人员名册缓存 */
 const AUDITORS_KEY = 'agms.auditors';
+/** 浏览器模式下的应用级设置（机关名称、机构代码等） */
+const SETTINGS_KEY = 'agms.settings';
+/** 浏览器模式下的模板附件内容（每个模板一个键，避免与元数据混在一起） */
+const dictFileKey = (id: string) => `agms.dictFile.${id}`;
 
 export type StorageMode = 'sqlite' | 'browser';
 
@@ -69,6 +74,16 @@ export interface DataRepository {
   saveDictItem(item: DictItem): Promise<DictItem>;
   deleteDictItem(id: string): Promise<void>;
   restoreDictDefaults(): Promise<DictItem[]>;
+
+  /* 文书模板附件（挂在 doc_template 条目上） */
+  uploadDictFile(id: string, file: File, updatedAt: string): Promise<DictItem | undefined>;
+  /** 取模板附件：未上传返回 null */
+  readDictFile(id: string): Promise<{ fileName: string; blob: Blob } | null>;
+  deleteDictFile(id: string): Promise<DictItem | undefined>;
+
+  /* 应用级键值配置（机关名称、机构代码等） */
+  loadSettings(): Promise<Record<string, string>>;
+  saveSetting(key: string, value: string): Promise<void>;
 
   /* 审计人员名册（全库共享） */
   loadAuditors(): Promise<AuditorRecord[]>;
@@ -204,6 +219,36 @@ const sqliteRepo: DataRepository = {
 
   async restoreDictDefaults() {
     return (await safe(() => backend.restoreDictDefaults(), 'restoreDictDefaults')) ?? [];
+  },
+
+  async uploadDictFile(id, file, updatedAt) {
+    const dataBase64 = await blobToBase64(file);
+    return safe(
+      () => backend.uploadDictFile(id, file.name, dataBase64, updatedAt),
+      'uploadDictFile',
+    );
+  },
+
+  async readDictFile(id) {
+    const payload = await safe(() => backend.readDictFile(id), 'readDictFile');
+    if (!payload) return null;
+    const ext = payload.fileName.split('.').pop() ?? '';
+    return {
+      fileName: payload.fileName,
+      blob: base64ToBlob(payload.dataBase64, mimeOfExt(ext)),
+    };
+  },
+
+  async deleteDictFile(id) {
+    return safe(() => backend.deleteDictFile(id), 'deleteDictFile');
+  },
+
+  async loadSettings() {
+    return (await safe(() => backend.loadAppSettings(), 'loadAppSettings')) ?? {};
+  },
+
+  async saveSetting(key, value) {
+    await safe(() => backend.saveAppSetting(key, value), 'saveAppSetting');
   },
 
   async loadAuditors() {
@@ -351,13 +396,15 @@ const browserRepo: DataRepository = {
 
   async saveDictItem(item) {
     const list = readJSON<DictItem[]>(DICT_KEY, defaultDictItems());
+    // 新建条目在这里补 id，并把它回传给调用方：新增模板后要立刻用这个 id 上传附件
+    const stored: DictItem = { ...item, id: item.id || `d_${item.category}_${Date.now()}` };
     writeJSON(
       DICT_KEY,
-      list.some((x) => x.id === item.id)
-        ? list.map((x) => (x.id === item.id ? item : x))
-        : [...list, { ...item, id: item.id || `d_${item.category}_${Date.now()}` }],
+      list.some((x) => x.id === stored.id)
+        ? list.map((x) => (x.id === stored.id ? stored : x))
+        : [...list, stored],
     );
-    return item;
+    return stored;
   },
 
   async deleteDictItem(id) {
@@ -415,6 +462,56 @@ const browserRepo: DataRepository = {
     }
     writeJSON(AUDITORS_KEY, merged);
     return merged;
+  },
+
+  /* ---------------- 文书模板附件（浏览器版存 localStorage） ---------------- */
+
+  async uploadDictFile(id, file, updatedAt) {
+    const base64 = await blobToBase64(file);
+    try {
+      localStorage.setItem(dictFileKey(id), base64);
+    } catch {
+      // 模板可能几 MB，localStorage 配额不够时明确报错，而不是静默丢文件
+      throw new Error('浏览器预览模式的本地存储空间不足，请改用桌面端上传模板');
+    }
+    const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
+    const list = readJSON<DictItem[]>(DICT_KEY, []);
+    const updated = list.map((x) =>
+      x.id === id
+        ? { ...x, fileName: file.name, fileExt: ext, fileSize: file.size, fileUpdatedAt: updatedAt }
+        : x,
+    );
+    writeJSON(DICT_KEY, updated);
+    return updated.find((x) => x.id === id);
+  },
+
+  async readDictFile(id) {
+    const base64 = localStorage.getItem(dictFileKey(id));
+    if (!base64) return null;
+    const item = readJSON<DictItem[]>(DICT_KEY, []).find((x) => x.id === id);
+    const fileName = item?.fileName || '模板文件';
+    const ext = fileName.split('.').pop() ?? '';
+    return { fileName, blob: base64ToBlob(base64, mimeOfExt(ext)) };
+  },
+
+  async deleteDictFile(id) {
+    localStorage.removeItem(dictFileKey(id));
+    const list = readJSON<DictItem[]>(DICT_KEY, []);
+    const updated = list.map((x) =>
+      x.id === id
+        ? { ...x, fileName: '', fileExt: '', fileSize: 0, fileUpdatedAt: '' }
+        : x,
+    );
+    writeJSON(DICT_KEY, updated);
+    return updated.find((x) => x.id === id);
+  },
+
+  async loadSettings() {
+    return readJSON<Record<string, string>>(SETTINGS_KEY, {});
+  },
+
+  async saveSetting(key, value) {
+    writeJSON(SETTINGS_KEY, { ...readJSON<Record<string, string>>(SETTINGS_KEY, {}), [key]: value });
   },
 };
 

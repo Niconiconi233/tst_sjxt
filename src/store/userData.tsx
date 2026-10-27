@@ -25,6 +25,12 @@ interface UserDataValue extends UserDataset {
   updateGroup: (id: string, patch: Partial<AuditGroup>) => void;
   removeGroup: (id: string) => void;
   addDocument: (d: AuditDocument) => void;
+  /**
+   * 新建文件并同时写入正文（模板生成文书用）。
+   * 必须走这一个方法：Rust 侧 insert_document 是 INSERT OR REPLACE，
+   * 先插行再写正文才安全；addDocument 的持久化是即发即忘的，紧接着写正文会丢。
+   */
+  addDocumentWithContent: (d: AuditDocument, content: string) => Promise<void>;
   updateDocument: (id: string, patch: Partial<AuditDocument>) => void;
   removeDocument: (id: string) => void;
   addTodo: (t: TodoItem) => void;
@@ -199,6 +205,31 @@ export function UserDataProvider({ children }: { children: ReactNode }) {
     [patchDataset],
   );
 
+  /**
+   * 新建文件并写入正文。
+   * 顺序不能反：Rust 侧 insert_document 是 INSERT OR REPLACE（会带上 data 里的
+   * content 字段，没有则写空串），而 save_document_content 是纯 UPDATE（行不存在
+   * 时无声无息什么都不写）。所以必须先建成文档行，再写正文。
+   */
+  const addDocumentWithContent = useCallback(
+    async (doc: AuditDocument, content: string) => {
+      const proj = dataRef.current.projects.find((p) => p.id === doc.projectId);
+      patchDataset((d) => ({
+        ...d,
+        documents: [doc, ...d.documents],
+        projects: d.projects.map((p) =>
+          p.id === doc.projectId ? { ...p, docCount: p.docCount + 1 } : p,
+        ),
+      }));
+      await repo.putDocument(ownerRef.current, doc, true);
+      await repo.saveDocumentContent(ownerRef.current, doc.id, content, doc.updatedAt);
+      if (proj) {
+        await repo.putProject(ownerRef.current, { ...proj, docCount: proj.docCount + 1 }, false);
+      }
+    },
+    [patchDataset],
+  );
+
   const updateDocument = useCallback(
     (id: string, patch: Partial<AuditDocument>) => {
       const cur = dataRef.current.documents.find((x) => x.id === id);
@@ -256,6 +287,7 @@ export function UserDataProvider({ children }: { children: ReactNode }) {
       updateGroup,
       removeGroup,
       addDocument,
+      addDocumentWithContent,
       updateDocument,
       removeDocument,
       addTodo,
@@ -271,6 +303,7 @@ export function UserDataProvider({ children }: { children: ReactNode }) {
       updateGroup,
       removeGroup,
       addDocument,
+      addDocumentWithContent,
       updateDocument,
       removeDocument,
       addTodo,

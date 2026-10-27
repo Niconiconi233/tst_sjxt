@@ -100,7 +100,14 @@ CREATE TABLE IF NOT EXISTS dict_items (
     remark     TEXT NOT NULL DEFAULT '',
     sort_order INTEGER NOT NULL DEFAULT 0,
     enabled    INTEGER NOT NULL DEFAULT 1,
-    builtin    INTEGER NOT NULL DEFAULT 0
+    builtin    INTEGER NOT NULL DEFAULT 0,
+    -- 文书模板附件（仅 doc_template 分类会用到）：文件名、扩展名、字节数、
+    -- 上传时间与二进制内容。旧库由 ensure_dict_file_columns 补齐。
+    file_name       TEXT NOT NULL DEFAULT '',
+    file_ext        TEXT NOT NULL DEFAULT '',
+    file_size       INTEGER NOT NULL DEFAULT 0,
+    file_updated_at TEXT,
+    file_data       BLOB
 );
 CREATE INDEX IF NOT EXISTS idx_dict_category ON dict_items(category, parent);
 
@@ -125,6 +132,14 @@ CREATE TABLE IF NOT EXISTS auditors (
     builtin       INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_auditors_dept ON auditors(department);
+
+-- 应用级键值配置：机关名称、机构代码等标量设置。
+-- 这类值既不是下拉选项（不属字典），也不随账户分片（全库共享）。
+CREATE TABLE IF NOT EXISTS app_settings (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL DEFAULT '',
+    updated_at TEXT
+);
 "#;
 
 /// 判断表中是否已存在某列（用于旧库平滑升级）
@@ -151,6 +166,30 @@ fn ensure_deleted_at_columns(conn: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
+/// 字典表承载文书模板附件所需的列。
+///
+/// 模板不另建表：`doc_template` 条目既是「模板名称 + 所属类别」的登记项，
+/// 也可挂一个真实的 docx/pdf 文件。若另建模板表，就会和字典页各有一份模板
+/// 清单，正是需要避免的重复。文件内容单独存 BLOB，`list_dict` 不取该列。
+fn ensure_dict_file_columns(conn: &Connection) -> rusqlite::Result<()> {
+    const COLUMNS: &[(&str, &str)] = &[
+        ("file_name", "TEXT NOT NULL DEFAULT ''"),
+        ("file_ext", "TEXT NOT NULL DEFAULT ''"),
+        ("file_size", "INTEGER NOT NULL DEFAULT 0"),
+        ("file_updated_at", "TEXT"),
+        ("file_data", "BLOB"),
+    ];
+    for (name, decl) in COLUMNS {
+        if !has_column(conn, "dict_items", name) {
+            conn.execute(
+                &format!("ALTER TABLE dict_items ADD COLUMN {name} {decl}"),
+                [],
+            )?;
+        }
+    }
+    Ok(())
+}
+
 impl AppState {
     /// 打开（或创建）数据库并完成建表
     pub fn new(path: PathBuf) -> rusqlite::Result<Self> {
@@ -166,6 +205,7 @@ impl AppState {
         )?;
         conn.execute_batch(MIGRATION_SQL)?;
         ensure_deleted_at_columns(&conn)?;
+        ensure_dict_file_columns(&conn)?;
         // 首次建库时播种业务字典与人员名册默认值（已存在的条目不会被覆盖）
         crate::dict::seed_defaults(&conn)?;
         crate::auditors::seed_defaults(&conn)?;

@@ -40,7 +40,7 @@ interface Editing {
 }
 
 export default function DictConfigPanel() {
-  const { items, ready, options, labels, save, remove, move, restoreDefaults } = useDict();
+  const { items, ready, allOf, labels, save, remove, move, restoreDefaults } = useDict();
   const { message } = App.useApp();
 
   const [category, setCategory] = useState<string>('department');
@@ -60,9 +60,11 @@ export default function DictConfigPanel() {
     setParent((cur) => (cur && parentOptions.includes(cur) ? cur : parentOptions[0] ?? ''));
   }, [category, meta?.parent, parentOptions]);
 
+  // 表格必须展示「含已停用」的全量条目：若用只看启用项的 options，
+  // 点一下停用开关整行就消失了，用户再也点不回来。
   const rows = useMemo(
-    () => options(category, meta?.parent ? parent : undefined),
-    [options, category, parent, meta?.parent],
+    () => allOf(category, meta?.parent ? parent : undefined),
+    [allOf, category, parent, meta?.parent],
   );
 
   const openCreate = () => {
@@ -92,17 +94,17 @@ export default function DictConfigPanel() {
       message.warning('同分类下已存在相同名称的选项');
       return;
     }
+    const current = editing.id ? items.find((x) => x.id === editing.id) : undefined;
     await save({
       id: editing.id,
       category: editing.category,
       parent: meta?.parent ? (values.parent ?? editing.parent) : editing.parent,
       label: values.label,
       remark: values.remark ?? '',
-      sortOrder: editing.id
-        ? items.find((x) => x.id === editing.id)?.sortOrder ?? rows.length
-        : rows.length,
-      enabled: true,
-      builtin: editing.id ? items.find((x) => x.id === editing.id)?.builtin ?? false : false,
+      sortOrder: current?.sortOrder ?? rows.length,
+      // 编辑已停用条目时保持停用，不能因为点了一次「保存」就悄悄启用
+      enabled: current?.enabled ?? true,
+      builtin: current?.builtin ?? false,
     });
     message.success(editing.id ? '已保存' : '已新增');
     setEditing(null);
@@ -116,8 +118,9 @@ export default function DictConfigPanel() {
   return (
     <div>
       <Typography.Paragraph style={{ fontSize: 12, color: '#5a6675', marginBottom: 12 }}>
-        维护系统各处下拉框的候选项。停用后该选项不再出现在下拉列表中，历史数据中已使用的值不受影响。
-        改动即时写入本机数据库，所有账户共用。
+        维护系统各处下拉框的候选项。停用后该选项不再出现在下拉列表中，但在本页仍会列出（显示为「停用」），
+        随时可以重新启用；历史数据中已使用的值不受影响。
+        改动即时写入本机数据库，所有账户共用。文书模板请到「文书模板库」页维护。
       </Typography.Paragraph>
 
       <Space wrap style={{ marginBottom: 12 }}>
@@ -151,7 +154,9 @@ export default function DictConfigPanel() {
             恢复预置项
           </Button>
         </Tooltip>
-        <span style={{ fontSize: 12, color: '#8a94a6' }}>共 {rows.length} 项</span>
+        <span style={{ fontSize: 12, color: '#8a94a6' }}>
+          共 {rows.length} 项，其中已停用 {rows.filter((x) => !x.enabled).length} 项
+        </span>
       </Space>
 
       {meta?.hint && (

@@ -76,19 +76,24 @@ pub fn reveal_db_file(state: State<'_, AppState>) -> CmdResult<()> {
 /* 业务字典（下拉选项配置）                                            */
 /* ------------------------------------------------------------------ */
 
-const DICT_COLUMNS: &str = "id, category, parent, label, remark, sort_order, enabled, builtin";
+/// 字典列清单：刻意不含 file_data（BLOB），列表接口不把模板正文一并读进内存
+const DICT_COLUMNS: &str = "id, category, parent, label, remark, sort_order, enabled, builtin,
+    file_name, file_ext, file_size, file_updated_at";
 
 fn dict_mapper(r: &rusqlite::Row<'_>) -> rusqlite::Result<DictItem> {
-    Ok(DictItem {
-        id: r.get(0)?,
-        category: r.get(1)?,
-        parent: r.get(2)?,
-        label: r.get(3)?,
-        remark: r.get(4)?,
-        sort_order: r.get(5)?,
-        enabled: r.get::<_, i32>(6).unwrap_or(1) != 0,
-        builtin: r.get::<_, i32>(7).unwrap_or(0) != 0,
-    })
+    DictItem::from_row(r)
+}
+
+/// 按 id 取单条字典（上传 / 删除附件后回传给前端，避免整表重拉）
+fn dict_item_by_id(conn: &Connection, id: &str) -> CmdResult<DictItem> {
+    let mut stmt = db_err!(conn.prepare(&format!(
+        "SELECT {DICT_COLUMNS} FROM dict_items WHERE id = ?1"
+    )))?;
+    let mut rows = db_err!(stmt.query_map(rusqlite::params![id], dict_mapper))?;
+    match rows.next() {
+        Some(Ok(item)) => Ok(item),
+        _ => Err("字典条目不存在".into()),
+    }
 }
 
 /// 全量字典（前端按 category / parent 自行分组）
@@ -156,6 +161,131 @@ pub fn restore_dict_defaults(state: State<'_, AppState>) -> CmdResult<Vec<DictIt
     db_err!(crate::dict::seed_defaults(&conn))?;
     drop(conn);
     list_dict(state)
+}
+
+/* ------------------------------------------------------------------ */
+/* 文书模板附件（挂在 doc_template 字典条目上）                        */
+/* ------------------------------------------------------------------ */
+
+/// 从数据库读出的附件内容，供前端转成 Blob 后另存
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DictFile {
+    pub file_name: String,
+    pub data_base64: String,
+}
+
+/// 上传 / 替换模板文件。
+///
+/// 内容以 base64 传输：几 MB 的模板若走字节数组会在 IPC 里序列化成超长 JSON 数字列表。
+/// 只更新附件列，条目本身的名称、类别、启停状态不受影响。
+#[tauri::command]
+pub fn upload_dict_file(
+    state: State<'_, AppState>,
+    id: String,
+    file_name: String,
+    data_base64: String,
+    updated_at: String,
+) -> CmdResult<DictItem> {
+    use base64::Engine as _;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data_base64.as_bytes())
+        .map_err(|e| format!("模板内容解码失败：{e}"))?;
+    if bytes.is_empty() {
+        return Err("模板文件为空".into());
+    }
+    let ext = file_name
+        .rsplit_once('.')
+        .map(|(_, e)| e.to_ascii_lowercase())
+        .unwrap_or_default();
+    let size = bytes.len() as i64;
+
+    let conn = lock(&state);
+    let changed = db_err!(conn.execute(
+        "UPDATE dict_items
+            SET file_name = ?1, file_ext = ?2, file_size = ?3,
+                file_updated_at = ?4, file_data = ?5
+          WHERE id = ?6",
+        rusqlite::params![file_name, ext, size, updated_at, bytes, id],
+    ))?;
+    if changed == 0 {
+        return Err("字典条目不存在".into());
+    }
+    dict_item_by_id(&conn, &id)
+}
+
+/// 读取模板文件内容（base64），供前端另存为本地文件
+#[tauri::command]
+pub fn read_dict_file(state: State<'_, AppState>, id: String) -> CmdResult<DictFile> {
+    use base64::Engine as _;
+    let conn = lock(&state);
+    let row: Option<(String, Option<Vec<u8>>)> = db_err!(conn
+        .query_row(
+            "SELECT file_name, file_data FROM dict_items WHERE id = ?1",
+            rusqlite::params![id],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<Vec<u8>>>(1)?)),
+        )
+        .map(Some)
+        .or_else(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => Ok(None),
+            other => Err(other),
+        }))?;
+    let (file_name, data) = row.ok_or_else(|| "字典条目不存在".to_string())?;
+    let bytes = data.ok_or_else(|| "该模板尚未上传文件".to_string())?;
+    Ok(DictFile {
+        file_name,
+        data_base64: base64::engine::general_purpose::STANDARD.encode(bytes),
+    })
+}
+
+/// 删除模板附件（保留模板条目本身，便于重新上传）
+#[tauri::command]
+pub fn delete_dict_file(state: State<'_, AppState>, id: String) -> CmdResult<DictItem> {
+    let conn = lock(&state);
+    db_err!(conn.execute(
+        "UPDATE dict_items
+            SET file_name = '', file_ext = '', file_size = 0,
+                file_updated_at = NULL, file_data = NULL
+          WHERE id = ?1",
+        rusqlite::params![id],
+    ))?;
+    dict_item_by_id(&conn, &id)
+}
+
+/* ------------------------------------------------------------------ */
+/* 应用级键值配置（机关名称、机构代码等）                              */
+/* ------------------------------------------------------------------ */
+
+/// 读取全部设置项。前端按 key 取用，缺失的键按空串处理。
+#[tauri::command]
+pub fn load_app_settings(
+    state: State<'_, AppState>,
+) -> CmdResult<std::collections::HashMap<String, String>> {
+    let conn = lock(&state);
+    let mut stmt = db_err!(conn.prepare("SELECT key, value FROM app_settings"))?;
+    let rows = db_err!(stmt.query_map([], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+    }))?;
+    Ok(rows.filter_map(|x| x.ok()).collect())
+}
+
+/// 写入单个设置项（幂等 upsert）
+#[tauri::command]
+pub fn save_app_setting(
+    state: State<'_, AppState>,
+    key: String,
+    value: String,
+) -> CmdResult<()> {
+    if key.trim().is_empty() {
+        return Err("设置项名称不能为空".into());
+    }
+    let conn = lock(&state);
+    db_err!(conn.execute(
+        "INSERT INTO app_settings (key, value, updated_at) VALUES (?1, ?2, ?3)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+        rusqlite::params![key, value, chrono_like_stamp()],
+    ))?;
+    Ok(())
 }
 
 /* ------------------------------------------------------------------ */

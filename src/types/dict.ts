@@ -27,6 +27,14 @@ export interface DictItem {
   sortOrder: number;
   enabled: boolean;
   builtin: boolean;
+  /** 附件原始文件名（文书模板用，未上传时为空串 / 缺省） */
+  fileName?: string;
+  /** 附件扩展名（小写，不含点） */
+  fileExt?: string;
+  /** 附件字节数 */
+  fileSize?: number;
+  /** 附件上传或替换时间 */
+  fileUpdatedAt?: string;
 }
 
 /** 各分类的中文名与二级归属说明，供配置页渲染 */
@@ -70,6 +78,8 @@ export const DICT_GROUPS: { title: string; categories: string[] }[] = [
   { title: '审计组', categories: ['group_status'] },
   {
     title: '工作文件',
-    categories: ['doc_category', 'doc_template', 'doc_status', 'secret_level'],
+    // doc_template 不在这里：模板条目还要挂上传的 docx/pdf 文件，
+    // 统一由「文书模板库」页维护，避免同一份模板清单出现两个入口。
+    categories: ['doc_category', 'doc_status', 'secret_level'],
   },
 ];

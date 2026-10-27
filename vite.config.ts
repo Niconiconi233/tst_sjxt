@@ -21,6 +21,14 @@ export default defineConfig({
     watch: { ignored: ['**/src-tauri/**'] },
   },
   envPrefix: ['VITE_', 'TAURI_'],
+  /**
+   * jszip 只在「文书模板套打」与 docx 导入时按需加载。
+   * 若不在启动时预优化，Vite 会在用户第一次触发时才临时优化依赖并整页 reload ——
+   * 正好在生成通知书的过程中把页面刷掉，编辑中的内容就丢了。
+   */
+  optimizeDeps: {
+    include: ['jszip'],
+  },
   build: {
     // Tauri 2 的 WebView（WKWebView / WebView2）均为现代内核，直接使用 esnext 目标，
     // 避免降级转换；压缩使用 terser，产物更稳定

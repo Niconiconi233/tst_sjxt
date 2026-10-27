@@ -23,18 +23,30 @@ interface DictValue {
   ready: boolean;
   /** 取某分类下已启用的条目（可指定上级值），按排序号升序 */
   options: (category: string, parent?: string) => DictItem[];
+  /**
+   * 取某分类下**全部**条目（含已停用），按排序号升序。
+   * 配置页必须用这个：用 options 当表格数据源时，一点「停用」条目就从表里消失，
+   * 停用后再也点不回来。
+   */
+  allOf: (category: string, parent?: string) => DictItem[];
   /** 取某分类下已启用条目的名称数组，直接喂给 Select / Segmented */
   labels: (category: string, parent?: string) => string[];
   /** 取条目的备注（如模板说明） */
   remarkOf: (category: string, label: string, parent?: string) => string;
-  /** 新增或更新条目 */
-  save: (item: Partial<DictItem> & { category: string; label: string }) => Promise<void>;
+  /** 新增或更新条目；返回落库后的记录（新建时带回后端生成的 id） */
+  save: (item: Partial<DictItem> & { category: string; label: string }) => Promise<DictItem>;
   /** 删除条目 */
   remove: (id: string) => Promise<void>;
   /** 上移 / 下移 */
   move: (item: DictItem, delta: -1 | 1) => Promise<void>;
   /** 补回系统预置项 */
   restoreDefaults: () => Promise<void>;
+  /** 上传 / 替换模板附件 */
+  uploadFile: (id: string, file: File) => Promise<void>;
+  /** 读取模板附件，未上传返回 null */
+  readFile: (id: string) => Promise<{ fileName: string; blob: Blob } | null>;
+  /** 删除模板附件（保留条目） */
+  removeFile: (id: string) => Promise<void>;
   reload: () => Promise<void>;
 }
 
@@ -58,17 +70,19 @@ export function DictProvider({ children }: { children: ReactNode }) {
     void reload();
   }, [reload]);
 
-  const options = useCallback(
+  const allOf = useCallback(
     (category: string, parent?: string) =>
       items
         .filter(
-          (x) =>
-            x.category === category &&
-            x.enabled &&
-            (parent === undefined || x.parent === parent),
+          (x) => x.category === category && (parent === undefined || x.parent === parent),
         )
         .sort((a, b) => a.sortOrder - b.sortOrder || a.id.localeCompare(b.id)),
     [items],
+  );
+
+  const options = useCallback(
+    (category: string, parent?: string) => allOf(category, parent).filter((x) => x.enabled),
+    [allOf],
   );
 
   const labels = useCallback(
@@ -95,14 +109,21 @@ export function DictProvider({ children }: { children: ReactNode }) {
         parent: item.parent ?? '',
         label: item.label,
         remark: item.remark ?? '',
-        sortOrder: item.sortOrder ?? options(item.category, item.parent).length,
+        // 排序号基准取「含停用」的全量条目，否则新增项会与停用项撞号
+        sortOrder: item.sortOrder ?? allOf(item.category, item.parent).length,
         enabled: item.enabled ?? true,
         builtin: item.builtin ?? false,
+        // 附件字段一并带上：浏览器实现是整条替换，漏掉就会把已上传的模板文件信息抹掉
+        fileName: item.fileName ?? '',
+        fileExt: item.fileExt ?? '',
+        fileSize: item.fileSize ?? 0,
+        fileUpdatedAt: item.fileUpdatedAt ?? '',
       };
-      await repo.saveDictItem(base);
+      const saved = await repo.saveDictItem(base);
       await reload();
+      return saved;
     },
-    [options, reload],
+    [allOf, reload],
   );
 
   const remove = useCallback(
@@ -115,7 +136,8 @@ export function DictProvider({ children }: { children: ReactNode }) {
 
   const move = useCallback(
     async (item: DictItem, delta: -1 | 1) => {
-      const list = options(item.category, item.parent);
+      // 排序在「含停用」的全量列表里做，否则停用项会被跳过、位置错乱
+      const list = allOf(item.category, item.parent);
       const idx = list.findIndex((x) => x.id === item.id);
       const target = idx + delta;
       if (idx < 0 || target < 0 || target >= list.length) return;
@@ -127,7 +149,7 @@ export function DictProvider({ children }: { children: ReactNode }) {
       }
       await reload();
     },
-    [options, reload],
+    [allOf, reload],
   );
 
   const restoreDefaults = useCallback(async () => {
@@ -135,20 +157,57 @@ export function DictProvider({ children }: { children: ReactNode }) {
     await reload();
   }, [reload]);
 
+  const uploadFile = useCallback(
+    async (id: string, file: File) => {
+      await repo.uploadDictFile(id, file, new Date().toISOString());
+      await reload();
+    },
+    [reload],
+  );
+
+  const readFile = useCallback((id: string) => repo.readDictFile(id), []);
+
+  const removeFile = useCallback(
+    async (id: string) => {
+      await repo.deleteDictFile(id);
+      await reload();
+    },
+    [reload],
+  );
+
   const value = useMemo<DictValue>(
     () => ({
       items,
       ready,
       options,
+      allOf,
       labels,
       remarkOf,
       save,
       remove,
       move,
       restoreDefaults,
+      uploadFile,
+      readFile,
+      removeFile,
       reload,
     }),
-    [items, ready, options, labels, remarkOf, save, remove, move, restoreDefaults, reload],
+    [
+      items,
+      ready,
+      options,
+      allOf,
+      labels,
+      remarkOf,
+      save,
+      remove,
+      move,
+      restoreDefaults,
+      uploadFile,
+      readFile,
+      removeFile,
+      reload,
+    ],
   );
 
   return <DictContext.Provider value={value}>{children}</DictContext.Provider>;

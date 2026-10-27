@@ -13,7 +13,7 @@ export interface SaveFilter {
 }
 
 /** 用 FileReader 转 base64，避免大字节数组在 IPC 里变成超长 JSON 数组 */
-function blobToBase64(blob: Blob): Promise<string> {
+export function blobToBase64(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
@@ -24,6 +24,28 @@ function blobToBase64(blob: Blob): Promise<string> {
     reader.onerror = () => reject(reader.error ?? new Error('读取导出内容失败'));
     reader.readAsDataURL(blob);
   });
+}
+
+/** base64 还原成 Blob（从数据库取回模板后转成可下载对象） */
+export function base64ToBlob(dataBase64: string, mime = ''): Blob {
+  const binary = atob(dataBase64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return new Blob([bytes], mime ? { type: mime } : undefined);
+}
+
+/** 按扩展名猜 MIME，供 Blob 构造与另存对话框过滤使用 */
+export function mimeOfExt(ext: string): string {
+  const table: Record<string, string> = {
+    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    doc: 'application/msword',
+    xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    xls: 'application/vnd.ms-excel',
+    pdf: 'application/pdf',
+    txt: 'text/plain',
+    md: 'text/markdown',
+  };
+  return table[ext.toLowerCase()] ?? 'application/octet-stream';
 }
 
 /**
