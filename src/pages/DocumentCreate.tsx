@@ -7,7 +7,6 @@ import {
   Card,
   Checkbox,
   Col,
-  DatePicker,
   Descriptions,
   Divider,
   Form,
@@ -26,7 +25,9 @@ import {
   CheckCircleOutlined,
   CloudUploadOutlined,
   FileAddOutlined,
+  FileTextOutlined,
   LeftOutlined,
+  QuestionCircleOutlined,
   SaveOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
@@ -37,22 +38,27 @@ import { useAuditors } from '@/store/auditorStore';
 import { allowedCategories, canDo } from '@/utils/permissions';
 import { bizColors } from '@/theme';
 import { recommendDocType } from '@/utils/docType';
+import { buildAuditDocVars, varDefOf } from '@/utils/auditDocVars';
+import { repo } from '@/services/repository';
+import DocVarHelpModal from '@/components/DocVarHelpModal';
 import type { AuditDocument, DocCategory, DocStatus, SecretLevel } from '@/types';
 
 const STEPS = [
   { title: '选择模板', desc: '文件类别与模板' },
   { title: '填写要素', desc: '标题、项目、密级' },
-  { title: '编制正文', desc: '事实、依据与结论' },
   { title: '流转送审', desc: '复核与签发设置' },
 ];
+
+/** 套打设置区的小字段标题（与组建审计组内的表单 label 字号保持一致） */
+const FIELD_LABEL = { fontSize: 12, color: '#5a6675', marginBottom: 4 };
 
 export default function DocumentCreate() {
   const navigate = useNavigate();
   const { message, modal } = App.useApp();
   const [params] = useSearchParams();
   const { currentUser } = useAuth();
-  const { projects, groups, documents, addDocument } = useUserData();
-  const { labels, remarkOf } = useDict();
+  const { projects, groups, documents, addDocument, addDocumentWithContent } = useUserData();
+  const { labels, allOf, remarkOf, readFile } = useDict();
   const { auditors } = useAuditors();
   const [form] = Form.useForm();
 
@@ -78,6 +84,121 @@ export default function DocumentCreate() {
   const initialProject = params.get('project') ?? undefined;
   const initialGroup = params.get('group') ?? undefined;
 
+  /* ---------------- 模板套打生成 ---------------- */
+
+  /** 当前类别下的全部模板（含未上传文件的条目） */
+  const categoryTemplates = useMemo(
+    () => allOf('doc_template', category),
+    [allOf, category],
+  );
+
+  /** 当前选中模板对应的字典条目（用于读取其 .docx 文件） */
+  const selectedTemplateItem = useMemo(
+    () => categoryTemplates.find((t) => t.label === template),
+    [categoryTemplates, template],
+  );
+
+  /** 选中的模板是否可套打：需为已上传的 .docx */
+  const canFill = !!selectedTemplateItem && /\.docx$/i.test(selectedTemplateItem.fileName ?? '');
+
+  /** 选中模板是否为表格类（.xlsx / .xls），是则走 Excel 形态 */
+  const isSheetTemplate =
+    !!selectedTemplateItem && /\.(xlsx|xls)$/i.test(selectedTemplateItem.fileName ?? '');
+
+  /** 按「模板实际文件格式」决定正文形态；无文件时退回类别推荐 */
+  const docType = isSheetTemplate
+    ? 'sheet'
+    : canFill
+      ? 'document'
+      : recommendDocType(category);
+
+  /** 套打上下文里选中的项目 / 审计组（与 Step 2 表单同源，提交时一致） */
+  const [tplProjectId, setTplProjectId] = useState<string | undefined>(initialProject);
+  const [tplGroupId, setTplGroupId] = useState<string | undefined>(initialGroup);
+
+  const selectedProject = useMemo(
+    () => projects.find((p) => p.id === tplProjectId) ?? null,
+    [projects, tplProjectId],
+  );
+
+  /** 模板里检测到的占位符 */
+  const [tplVars, setTplVars] = useState<string[]>([]);
+  const [tplScan, setTplScan] = useState<'idle' | 'loading' | 'done' | 'error'>('idle');
+  const [tplError, setTplError] = useState('');
+  /** 系统取不到值、由使用者手填的字段 */
+  const [extraVars, setExtraVars] = useState<Record<string, string>>({});
+  const [org, setOrg] = useState<{ name?: string; code?: string }>({});
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [generating, setGenerating] = useState(false);
+
+  // 机构名称取自「系统设置 → 机构与人员」，供落款使用
+  useEffect(() => {
+    repo
+      .loadSettings()
+      .then((s) => setOrg({ name: s['org.name'], code: s['org.code'] }))
+      .catch(() => undefined);
+  }, []);
+
+  // 换模板或换类别就重新解析占位符
+  useEffect(() => {
+    if (!canFill || !selectedTemplateItem) {
+      setTplVars([]);
+      setTplScan('idle');
+      setTplError('');
+      return;
+    }
+    let alive = true;
+    setTplScan('loading');
+    setTplError('');
+    void (async () => {
+      try {
+        const payload = await readFile(selectedTemplateItem.id);
+        if (!payload) throw new Error('未能读取模板文件，请到文书模板库重新上传');
+        const { scanDocxPlaceholders } = await import('@/utils/docxPlaceholder');
+        const found = await scanDocxPlaceholders(payload.blob);
+        if (!alive) return;
+        setTplVars(found);
+        setTplScan('done');
+      } catch (err) {
+        if (!alive) return;
+        setTplVars([]);
+        setTplScan('error');
+        setTplError(err instanceof Error ? err.message : String(err));
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [canFill, selectedTemplateItem, readFile]);
+
+  /** 依据当前选中的项目/组自动取值；取不到的留空由使用者手填 */
+  const tplVarsAll = useMemo(() => {
+    const group = selectedProject
+      ? groups.find((g) => g.id === tplGroupId || g.projectId === selectedProject.id)
+      : undefined;
+    return buildAuditDocVars({
+      org,
+      project: selectedProject,
+      group: group
+        ? {
+            name: group.name,
+            members: group.members,
+            location: group.location,
+            establishDate: group.establishDate,
+            planEndDate: group.planEndDate,
+            disciplineNote: group.disciplineNote,
+          }
+        : undefined,
+      title: (form.getFieldValue('title') as string) ?? '',
+      docNo: (form.getFieldValue('code') as string) ?? '',
+      issueDate: dayjs().format('YYYY-MM-DD'),
+    });
+  }, [org, selectedProject, groups, tplGroupId, form]);
+
+  /** 手填值覆盖自动取值（提交时与最终上下文合并） */
+  const setExtra = (key: string, value: string) =>
+    setExtraVars((prev) => ({ ...prev, [key]: value }));
+
   const projectOptions = useMemo(
     () => projects.map((p) => ({ value: p.id, label: `${p.code} ${p.name}` })),
     [],
@@ -100,15 +221,11 @@ export default function DocumentCreate() {
       }
       setSnapshot((p) => ({ ...p, ...form.getFieldsValue(true) }));
       setStep(2);
-      return;
-    }
-    if (step === 2) {
-      setSnapshot((p) => ({ ...p, ...form.getFieldsValue(true) }));
-      setStep(3);
     }
   };
 
-  const onSubmit = () => {
+  const onSubmit = async () => {
+    if (generating) return;
     const project = projects.find((p) => p.id === val.projectId);
     const group = groups.find((g) => g.id === val.groupId);
     const author = auditors.find((a) => a.id === val.authorId);
@@ -124,7 +241,7 @@ export default function DocumentCreate() {
       title: val.title,
       category,
       template,
-      docType: recommendDocType(category),
+      docType,
       hasContent: false,
       projectId: val.projectId,
       projectName: project?.name ?? '',
@@ -144,9 +261,67 @@ export default function DocumentCreate() {
       remark: val.remark,
     };
 
-    // 写入当前登录账户的专属数据空间
-    addDocument(doc);
-    message.success(flow === 'draft' ? '已保存为草稿' : flow === 'review' ? '已提交复核' : '文件已签发');
+    setGenerating(true);
+    try {
+      if (isSheetTemplate && selectedTemplateItem) {
+        // 表格类模板（.xlsx/.xls）：解析成 Univer 表格快照落库，走 Excel 形态
+        const payload = await readFile(selectedTemplateItem.id);
+        if (!payload) throw new Error('未能读取模板文件，请到文书模板库重新上传');
+        const { xlsxToSnapshot } = await import('@/utils/officeConvert');
+        const file = new File([payload.blob], payload.fileName || `${template}.xlsx`);
+        const snapshot = await xlsxToSnapshot(file, val.title);
+        doc.hasContent = true;
+        await addDocumentWithContent(doc, JSON.stringify(snapshot));
+        message.success(flow === 'draft' ? '已保存为草稿' : flow === 'review' ? '已提交复核' : '文件已签发');
+      } else if (canFill && selectedTemplateItem) {
+        // 可套打（.docx 模板）时，用最终上下文重新构建变量并填充占位符，
+        // 直接把原始 DOCX 字节落库；否则按无正文方式新建。
+        const payload = await readFile(selectedTemplateItem.id);
+        if (!payload) throw new Error('未能读取模板文件，请到文书模板库重新上传');
+        const { fillDocxTemplate } = await import('@/utils/docxPlaceholder');
+        const finalCtx = buildAuditDocVars({
+          org,
+          project: project ?? null,
+          group: group
+            ? {
+                name: group.name,
+                members: group.members,
+                location: group.location,
+                establishDate: group.establishDate,
+                planEndDate: group.planEndDate,
+                disciplineNote: group.disciplineNote,
+              }
+            : undefined,
+          title: val.title,
+          docNo: doc.code,
+          issueDate: dayjs().format('YYYY-MM-DD'),
+        });
+        const filled = await fillDocxTemplate(payload.blob, { ...finalCtx, ...extraVars });
+        const bytes = new Uint8Array(await filled.blob.arrayBuffer());
+        let b64 = '';
+        const chunk = 0x8000;
+        for (let i = 0; i < bytes.length; i += chunk) {
+          b64 += String.fromCharCode(...bytes.subarray(i, i + chunk));
+        }
+        const content = '__DOCX__:' + btoa(b64);
+        doc.hasContent = true;
+        await addDocumentWithContent(doc, content);
+        if (filled.missing.length) {
+          message.warning(`已生成，但有 ${filled.missing.length} 个字段未取到值，文中对应位置为空：${filled.missing.join('、')}`);
+        } else {
+          message.success(flow === 'draft' ? '已保存为草稿' : flow === 'review' ? '已提交复核' : '文件已签发');
+        }
+      } else {
+        addDocument(doc);
+        message.success(flow === 'draft' ? '已保存为草稿' : flow === 'review' ? '已提交复核' : '文件已签发');
+      }
+    } catch (err) {
+      console.error(err);
+      message.error(`生成失败：${err instanceof Error ? err.message : String(err)}`);
+      setGenerating(false);
+      return;
+    }
+    setGenerating(false);
 
     modal.success({
       title: flow === 'draft' ? '文件已存为草稿' : flow === 'review' ? '文件已提交复核' : '文件已签发',
@@ -232,30 +407,44 @@ export default function DocumentCreate() {
               2. 选择文件模板
             </Typography.Title>
             <Row gutter={[12, 12]}>
-              {labels('doc_template', category).map((t) => (
-                <Col span={8} key={t}>
-                  <div
-                    onClick={() => setTemplate(t)}
-                    style={{
-                      border: `1px solid ${template === t ? bizColors.primary : '#e6e9ee'}`,
-                      background: template === t ? bizColors.primaryLight : '#fff',
-                      borderRadius: 4,
-                      padding: '12px 14px',
-                      cursor: 'pointer',
-                      height: '100%',
-                      transition: 'all .2s',
-                    }}
-                  >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{ fontSize: 13, fontWeight: 500 }}>{t}</span>
-                      {template === t && <CheckCircleOutlined style={{ color: bizColors.primary }} />}
+              {labels('doc_template', category).map((t) => {
+                const item = categoryTemplates.find((x) => x.label === t);
+                const hasDocx = !!item && /\.docx$/i.test(item.fileName ?? '');
+                const hasSheet = !!item && /\.(xlsx|xls)$/i.test(item.fileName ?? '');
+                return (
+                  <Col span={8} key={t}>
+                    <div
+                      onClick={() => setTemplate(t)}
+                      style={{
+                        border: `1px solid ${template === t ? bizColors.primary : '#e6e9ee'}`,
+                        background: template === t ? bizColors.primaryLight : '#fff',
+                        borderRadius: 4,
+                        padding: '12px 14px',
+                        cursor: 'pointer',
+                        height: '100%',
+                        transition: 'all .2s',
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: 13, fontWeight: 500 }}>{t}</span>
+                        {template === t && <CheckCircleOutlined style={{ color: bizColors.primary }} />}
+                      </div>
+                      <div className="text-muted" style={{ fontSize: 11, marginTop: 6, lineHeight: 1.5 }}>
+                        {remarkOf('doc_template', t, category) || '按标准格式套用模板编制'}
+                      </div>
+                      {item?.fileName && (
+                        <div style={{ fontSize: 10, color: hasDocx ? '#1a5fb4' : hasSheet ? '#2f855a' : '#8a94a6', marginTop: 4 }}>
+                          {hasDocx
+                            ? '已上传 .docx，可套打生成'
+                            : hasSheet
+                              ? '已上传表格，将生成 Excel 文件'
+                              : `已上传（${item.fileExt ?? ''}）`}
+                        </div>
+                      )}
                     </div>
-                    <div className="text-muted" style={{ fontSize: 11, marginTop: 6, lineHeight: 1.5 }}>
-                      {remarkOf('doc_template', t, category) || '按标准格式套用模板编制'}
-                    </div>
-                  </div>
-                </Col>
-              ))}
+                  </Col>
+                );
+              })}
             </Row>
 
             <Alert
@@ -264,6 +453,171 @@ export default function DocumentCreate() {
               style={{ marginTop: 16, fontSize: 12 }}
               message="模板包含固定的文书要素、格式与审批流程节点，套用后可编辑正文内容。"
             />
+
+            {/* ---------- 模板套打生成扩展栏 ---------- */}
+            {canFill && selectedTemplateItem && (
+              <div
+                style={{
+                  marginTop: 12,
+                  border: '1px solid #dfe4ea',
+                  borderRadius: 4,
+                  background: '#fafbfc',
+                  padding: '12px 14px',
+                }}
+              >
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    marginBottom: 10,
+                  }}
+                >
+                  <Space size={8}>
+                    <FileTextOutlined style={{ color: '#1a5fb4' }} />
+                    <span style={{ fontSize: 13, fontWeight: 600 }}>{template}套打生成</span>
+                    <Tag color="blue" style={{ fontSize: 10, marginInlineEnd: 0 }}>
+                      套打模板
+                    </Tag>
+                  </Space>
+                  <Button
+                    type="link"
+                    size="small"
+                    icon={<QuestionCircleOutlined />}
+                    onClick={() => setHelpOpen(true)}
+                  >
+                    占位符写法
+                  </Button>
+                </div>
+
+                <Row gutter={12} style={{ marginBottom: 8 }}>
+                  <Col span={8}>
+                    <div style={FIELD_LABEL}>所属审计项目</div>
+                    <Select
+                      showSearch
+                      optionFilterProp="label"
+                      style={{ width: '100%' }}
+                      value={tplProjectId}
+                      placeholder="请选择审计项目"
+                      options={projectOptions}
+                      onChange={(v) => {
+                        setTplProjectId(v);
+                        form.setFieldValue('projectId', v);
+                      }}
+                    />
+                  </Col>
+                  <Col span={8}>
+                    <div style={FIELD_LABEL}>所属审计组</div>
+                    <Select
+                      allowClear
+                      style={{ width: '100%' }}
+                      value={tplGroupId}
+                      placeholder="请选择审计组（可选）"
+                      options={groupOptions}
+                      onChange={(v) => {
+                        setTplGroupId(v);
+                        form.setFieldValue('groupId', v);
+                      }}
+                    />
+                  </Col>
+                  <Col span={8}>
+                    <div style={FIELD_LABEL}>模板占位符</div>
+                    {tplScan === 'loading' ? (
+                      <span style={{ fontSize: 12, color: '#8a94a6' }}>正在解析模板…</span>
+                    ) : tplScan === 'error' ? (
+                      <span style={{ fontSize: 12, color: '#b42318' }}>{tplError}</span>
+                    ) : tplScan === 'done' ? (
+                      <span style={{ fontSize: 12 }}>
+                        检测到 <b>{tplVars.length}</b> 个占位符
+                      </span>
+                    ) : (
+                      <span style={{ fontSize: 12, color: '#8a94a6' }}>请先选择模板</span>
+                    )}
+                  </Col>
+                </Row>
+
+                {tplScan === 'done' && tplVars.length === 0 && (
+                  <Alert
+                    type="warning"
+                    showIcon
+                    style={{ fontSize: 12, marginTop: 8 }}
+                    message="模板里没有占位符，生成的文书就是模板原文"
+                    description={
+                      <span style={{ fontSize: 12 }}>
+                        在 Word 模板中把需要填写的位置写成 $&#123;被审计单位&#125; 这类占位符即可自动填充。点右上角「占位符写法」查看全部可用字段。
+                      </span>
+                    }
+                  />
+                )}
+
+                {tplScan === 'done' && tplVars.length > 0 && (
+                  <>
+                    <div style={{ fontSize: 12, color: '#5a6675', margin: '10px 0 4px' }}>
+                      将填充 {tplVars.length} 个字段；系统取不到值的可直接在此填写，留空则文中该处为空
+                    </div>
+                    <div
+                      style={{
+                        maxHeight: 190,
+                        overflow: 'auto',
+                        background: '#fff',
+                        border: '1px solid #eef1f5',
+                        borderRadius: 4,
+                        padding: '6px 10px',
+                      }}
+                    >
+                      {tplVars.map((key) => {
+                        const auto = tplVarsAll[key] ?? '';
+                        const known = !!varDefOf(key);
+                        return (
+                          <div
+                            key={key}
+                            style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '3px 0' }}
+                          >
+                            <Tag
+                              color={known ? 'blue' : 'orange'}
+                              title={known ? undefined : '模板中的自定义字段'}
+                              style={{
+                                width: 108,
+                                textAlign: 'center',
+                                fontSize: 11,
+                                marginInlineEnd: 0,
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                              }}
+                            >
+                              {key}
+                            </Tag>
+                            {auto ? (
+                              <span
+                                title={auto}
+                                style={{
+                                  fontSize: 12,
+                                  color: '#1f2933',
+                                  flex: 1,
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis',
+                                  whiteSpace: 'nowrap',
+                                }}
+                              >
+                                {auto}
+                              </span>
+                            ) : (
+                              <Input
+                                size="small"
+                                value={extraVars[key] ?? ''}
+                                placeholder={known ? '系统无取值，请填写' : '模板中的自定义字段，请填写'}
+                                onChange={(e) => setExtra(key, e.target.value)}
+                                style={{ flex: 1, maxWidth: 320 }}
+                              />
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -397,53 +751,8 @@ export default function DocumentCreate() {
           </Form>
         </div>
 
-        {/* ---------- Step 3：正文 ---------- */}
+        {/* ---------- Step 3：流转 ---------- */}
         {step === 2 && (
-          <div>
-            <Alert
-              type="info"
-              showIcon
-              style={{ marginBottom: 12, fontSize: 12 }}
-              message={`已套用「${template}」模板。以下为模板中的正文要素，可按实际情况修改；正式版将支持富文本与 Word 式排版。`}
-            />
-
-            <Form form={form} layout="vertical">
-              <Form.Item label="一、审计事实（或基本情况）">
-                <Input.TextArea
-                  rows={4}
-                  placeholder="如：经查，2025年度该单位在××科目列支会议费××万元，超出年度预算××万元……"
-                />
-              </Form.Item>
-              <Form.Item label="二、审计依据">
-                <Input.TextArea
-                  rows={3}
-                  placeholder="如：《中华人民共和国预算法》第五十七条、《党政机关厉行节约反对浪费条例》第十条……"
-                />
-              </Form.Item>
-              <Form.Item label="三、审计结论与定性">
-                <Input.TextArea rows={3} placeholder="如：上述行为构成超预算列支，属于违反预算管理规定的行为。" />
-              </Form.Item>
-              <Form.Item label="四、处理意见 / 建议">
-                <Input.TextArea rows={3} placeholder="如：建议责成该单位收回超支资金，调整相关会计账目，并完善会议费审批流程。" />
-              </Form.Item>
-              <Row gutter={16}>
-                <Col span={12}>
-                  <Form.Item label="审计人员签名">
-                    <Input placeholder="由系统按起草人自动带入" defaultValue={currentUser?.name} />
-                  </Form.Item>
-                </Col>
-                <Col span={12}>
-                  <Form.Item label="编制日期">
-                    <DatePicker style={{ width: '100%' }} defaultValue={dayjs()} />
-                  </Form.Item>
-                </Col>
-              </Row>
-            </Form>
-          </div>
-        )}
-
-        {/* ---------- Step 4：流转 ---------- */}
-        {step === 3 && (
           <div>
             <Row gutter={16}>
               <Col span={14}>
@@ -557,12 +866,30 @@ export default function DocumentCreate() {
               下一步
             </Button>
           ) : (
-            <Button type="primary" icon={<CheckCircleOutlined />} onClick={onSubmit}>
-              {flow === 'draft' ? '保存草稿' : flow === 'review' ? '提交复核' : '确认签发'}
+            <Button
+              type="primary"
+              icon={<CheckCircleOutlined />}
+              loading={generating}
+              onClick={() => void onSubmit()}
+            >
+              {generating
+                ? '正在生成文书…'
+                : flow === 'draft'
+                  ? '保存草稿'
+                  : flow === 'review'
+                    ? '提交复核'
+                    : '确认签发'}
             </Button>
           )}
         </Space>
       </Card>
+
+      <DocVarHelpModal
+        open={helpOpen}
+        onClose={() => setHelpOpen(false)}
+        found={tplScan === 'done' ? tplVars : undefined}
+        templateName={template}
+      />
     </div>
   );
 }

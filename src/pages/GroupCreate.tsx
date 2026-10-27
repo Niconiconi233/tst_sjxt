@@ -44,7 +44,6 @@ import { useDict } from '@/store/dictStore';
 import { useAuditors } from '@/store/auditorStore';
 import { repo } from '@/services/repository';
 import { buildAuditDocVars, varDefOf } from '@/utils/auditDocVars';
-import { safeFileName } from '@/utils/exportFile';
 import { usePermission } from '@/utils/permissions';
 import type { AuditDocument, AuditGroup, Auditor, GroupMember, GroupRole } from '@/types';
 
@@ -422,12 +421,17 @@ export default function GroupCreate() {
         if (usable) {
           const payload = await readFile(tpl!.id);
           if (!payload) throw new Error('未能读取模板文件，请到文书模板库重新上传');
-          // 解析与转换都是重活，按需加载
-          const { fillDocxTemplate, filledDocxAsFile } = await import('@/utils/docxPlaceholder');
+          // 填占位符后直接把原始 DOCX 字节落库（__DOCX__: 前缀），
+          // 由 docx-editor 直接打开，不再经 Univer 快照转换层
+          const { fillDocxTemplate } = await import('@/utils/docxPlaceholder');
           const filled = await fillDocxTemplate(payload.blob, finalVars);
-          const { docxToSnapshot } = await import('@/utils/officeConvert');
-          const file = filledDocxAsFile(filled.blob, `${safeFileName(noticeTitleValue)}.docx`);
-          snapshotJson = JSON.stringify(await docxToSnapshot(file, noticeTitleValue));
+          const bytes = new Uint8Array(await filled.blob.arrayBuffer());
+          let b64 = '';
+          const chunk = 0x8000;
+          for (let i = 0; i < bytes.length; i += chunk) {
+            b64 += String.fromCharCode(...bytes.subarray(i, i + chunk));
+          }
+          snapshotJson = '__DOCX__:' + btoa(b64);
           if (filled.missing.length) {
             noticeWarn = `有 ${filled.missing.length} 个字段未取到值，文中对应位置为空：${filled.missing.join('、')}`;
           }
