@@ -72,6 +72,15 @@ Thumbs.db
 ehthumbs.db
 Desktop.ini
 
+# ========== 编辑器字体（public/fonts） ==========
+# 中文字体由使用人自行放入本地 public/fonts/，构建时会被拷进 dist/fonts/。
+# 字体文件体积大（十几 MB）且涉及版权，不入库；目录内的说明文件保留。
+public/fonts/*.ttf
+public/fonts/*.ttc
+public/fonts/*.otf
+public/fonts/*.woff
+public/fonts/*.woff2
+
 # ========== 本机工具产生的临时文件 ==========
 # WorkBuddy 的项目记忆（如希望团队共享，可删除下面这一行）
 .workbuddy/
