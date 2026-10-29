@@ -29,7 +29,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["dmg", "app", "nsis"],
     "windows": {
       "webviewInstallMode": {
         "type": "downloadBootstrapper"

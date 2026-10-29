@@ -36,29 +36,38 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # macOS 只出 Apple Silicon（aarch64）版本；不再构建 Intel (x64) 版本。
           - label: macOS Apple Silicon (arm64)
             platform: macos-latest
             target: aarch64-apple-darwin
             args: '--target aarch64-apple-darwin'
             assetPattern: ''
-          - label: macOS Intel (x64)
-            platform: macos-latest
-            target: x86_64-apple-darwin
-            args: '--target x86_64-apple-darwin'
-            assetPattern: ''
 
           # 标准版（推荐）：不含 WebView2 运行时，安装包约 15 MB 以内。
           # 采用 tauri.conf.json 默认的 downloadBootstrapper：安装时检测系统，
           # 已有 WebView2（Win11 全部、Win10 1803+ 绝大多数）就直接跳过，不联网。
+          # 显式传默认命名 pattern，保证与离线版的命名走同一条代码路径。
           - label: Windows x64 · 标准版
             platform: windows-latest
             target: x86_64-pc-windows-msvc
             args: '--target x86_64-pc-windows-msvc'
-            assetPattern: ''
+            assetPattern: '[name]_[version]_[arch][setup][ext]'
+
+          # 32 位（x86）标准版：供仍在使用 32 位 Windows 的老旧机器。
+          # WebView2 运行时同样有 x86 版本，downloadBootstrapper 会自动匹配。
+          - label: Windows x86 (32 位) · 标准版
+            platform: windows-latest
+            target: i686-pc-windows-msvc
+            args: '--target i686-pc-windows-msvc'
+            assetPattern: '[name]_[version]_[arch][setup][ext]'
 
           # 离线版：内置 WebView2 离线运行时（约 +130 MB），仅供确实装不上 WebView2
           # 的内网 / 企业版系统应急使用，通过 --config 覆盖默认的 downloadBootstrapper；
-          # 覆盖文件里刻意重复写了 nsis 配置，避免不同合并语义下安装界面/安装模式回落默认值
+          # 覆盖文件里刻意重复写了 nsis 配置，避免不同合并语义下安装界面/安装模式回落默认值。
+          # 注意：三个 Windows 变体的产物名必须互不相同，否则后完成的 job 会把
+          # 先完成的 job 传的同名资产删掉重传（tauri-action 的同名覆盖行为），
+          # 曾因此出现「标准版 15MB 被离线版 213MB 覆盖、Release 里全是全量包」。
+          # 离线版靠 _offline 后缀区分；x64 与 x86 靠 [arch] 天然区分。
           - label: Windows x64 · 离线版（内置 WebView2）
             platform: windows-latest
             target: x86_64-pc-windows-msvc
@@ -107,9 +116,9 @@ jobs:
 
       # Windows 上 rusqlite 的 bundled 特性需要本地 C 编译器，
       # windows-latest 已自带 MSVC，无需额外安装；macOS 自带 clang。
-      # Windows 跑两个变体：默认配置出「标准版」（安装包约 15MB 内，WebView2 按需下载），
-      # 带 --config 的变体出「离线版」（内置 WebView2，构建时会从微软下载约 130MB）。
-      # 离线版产物名通过 releaseAssetNamePattern 加 _offline 后缀区分，避免同名冲突。
+      # Windows 跑三个变体：x64 / x86 标准版 + x64 离线版（内置 WebView2，约 130MB）。
+      # Windows 只出 NSIS（setup.exe）：tauri.conf.json 的 bundle.targets 已限定为
+      # dmg/app/nsis，不再产出 WiX 的 .msi（其语言默认 en-US，且曾与标准版同名互相覆盖）。
       - name: 构建并上传 Release 产物
         uses: tauri-apps/tauri-action@v0
         env:
@@ -135,14 +144,16 @@ jobs:
           releaseBody: |
             审计组工作管理系统 v__VERSION__ 桌面安装包。
 
-            - macOS：`.dmg`（Apple Silicon 为 aarch64，Intel 为 x64）
-            - Windows 标准版（推荐）：`-setup.exe`（NSIS）与 `.msi`，安装包约 15 MB。
+            - macOS：`.dmg`，仅提供 Apple Silicon（aarch64，M1 及以上）版本
+            - Windows 标准版（推荐）：`-setup.exe`（NSIS，简体中文安装界面），安装包约 15 MB。
               安装时自动检测系统内的 WebView2：已安装则直接跳过、完全不联网；
               缺失时才即时下载（Windows 11 全部预装，Windows 10 1803 以上绝大多数已随 Edge 更新预装）
+              - `_x64-setup.exe`：64 位 Windows
+              - `_i686-setup.exe`：32 位 Windows（老旧机器）
             - Windows 离线版 `_offline`：内置 WebView2 离线运行时，安装包约 150 MB，
               仅供确实装不上 WebView2 的内网 / 企业版系统应急使用
 
-            系统要求：Windows 10 1803 及以上（64 位）或 Windows 11。
+            系统要求：Windows 10 1803 及以上（32 / 64 位）或 Windows 11。
 
             Windows 安装程序为简体中文界面，默认安装到 `C:\Program Files`（需管理员权限），
             同一台机器的多个 Windows 账户共用一套程序；审计数据按 Windows 账户分别存放在
